@@ -1,16 +1,14 @@
-import dash
-from dash import dcc, html, no_update
-from dash.dependencies import Input, Output, State
+import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
 import re
 import math
+import time
 
-# --- 1. App Initialization ---
-app = dash.Dash(__name__)
-server = app.server
+# --- 1. Streamlit 頁面設定 ---
+st.set_page_config(page_title="GNSS Performance Simulator", layout="wide", initial_sidebar_state="expanded")
 
-# --- Common: Multi-Constellation Satellite Data ---
+# --- 公用常數與資料 ---
 SATELLITE_ALMANAC = [
     {"prn": "G01", "az": 45, "el": 60, "sys": "GPS"}, {"prn": "G04", "az": 135, "el": 30, "sys": "GPS"},
     {"prn": "G07", "az": 225, "el": 75, "sys": "GPS"}, {"prn": "G10", "az": 315, "el": 40, "sys": "GPS"},
@@ -31,34 +29,22 @@ SATELLITE_ALMANAC = [
     {"prn": "C16", "az": 50, "el": 50, "sys": "BeiDou"}, {"prn": "C21", "az": 140, "el": 10, "sys": "BeiDou"},
     {"prn": "C29", "az": 230, "el": 45, "sys": "BeiDou"}, {"prn": "C33", "az": 320, "el": 75, "sys": "BeiDou"},
 ]
-SYS_COLORS = {"GPS": "#00e5ff", "Galileo": "#39ff14", "GLONASS": "#ff003c", "BeiDou": "#ffea00"}
 
+SYS_COLORS = {"GPS": "#00e5ff", "Galileo": "#39ff14", "GLONASS": "#ff003c", "BeiDou": "#ffea00"}
 DEVICE_CONFIGS = {
-    'Navigator': {
-        'name': 'Pro Navigator (RHCP Ant)',
-        'mismatch_loss': 0.0, 
-        'body_loss': 0.0,     
-        'mp_factor': 1.0,     
-        'color': '#00e5ff' 
-    },
-    'Wearable': {
-        'name': 'Smartwatch (LP Ant)',
-        'mismatch_loss': 3.0, 
-        'body_loss': 4.0,     
-        'mp_factor': 2.5,     
-        'color': '#ff003c' 
-    }
+    'Navigator': {'name': 'Pro Navigator (RHCP Ant)', 'mismatch_loss': 0.0, 'body_loss': 0.0, 'mp_factor': 1.0, 'color': '#00e5ff'},
+    'Wearable': {'name': 'Smartwatch (LP Ant)', 'mismatch_loss': 3.0, 'body_loss': 4.0, 'mp_factor': 2.5, 'color': '#ff003c'}
 }
+BORDER_COLOR = "#1f2937"
 
 PRN_L1 = np.random.choice([1, -1], size=50)
 TIME_L1 = np.arange(50)
 PRN_L5 = np.random.choice([1, -1], size=500)
 TIME_L5 = np.linspace(0, 50, 500, endpoint=False) 
 
+# --- 輔助函數 ---
 def parse_coordinate_string(coord_str):
-    if not coord_str or not isinstance(coord_str, str): return 25.033964, 121.564468
-    
-    # 解析 DMS 格式
+    if not coord_str: return 25.033964, 121.564468
     dms_pattern = r"(\d+)[°\s]+(\d+)['\s]+([\d.]+)[^NSns]*([NSns])[,\s]*(\d+)[°\s]+(\d+)['\s]+([\d.]+)[^EWew]*([EWew])"
     match_dms = re.search(dms_pattern, coord_str)
     if match_dms:
@@ -70,12 +56,9 @@ def parse_coordinate_string(coord_str):
         if lon_dir == 'W': lon = -lon
         return lat, lon
 
-    # 解析 Decimal 格式
     dec_pattern = r"(-?[\d.]+)[,\s]+(-?[\d.]+)"
     match_dec = re.search(dec_pattern, coord_str)
-    if match_dec: 
-        return float(match_dec.group(1)), float(match_dec.group(2))
-    
+    if match_dec: return float(match_dec.group(1)), float(match_dec.group(2))
     return 25.033964, 121.564468
 
 def generate_circle_polygon(lat, lon, radius_m, num_points=36):
@@ -87,325 +70,255 @@ def generate_circle_polygon(lat, lon, radius_m, num_points=36):
         points_lon.append(lon + (dx / 6371000.0) * (180.0 / math.pi) / math.cos(lat * math.pi / 180.0))
     return points_lat, points_lon
 
-# --- Theme Variables ---
-BG_COLOR = "#0a0e17"       
-PANEL_BG = "#131a26"       
-BORDER_COLOR = "#1f2937"   
-TEXT_COLOR = "#e2e8f0"     
-H_COLOR = "#38bdf8"        
-ACCENT_GREEN = "#10b981"
-ACCENT_RED = "#ef4444"
-INPUT_STYLE = {
-    'width': '100%', 'marginTop': '5px', 'padding': '8px', 
-    'borderRadius': '4px', 'border': f'1px solid {BORDER_COLOR}', 
-    'backgroundColor': '#0a0e17', 'color': '#00e5ff', 'boxSizing': 'border-box',
-    'fontWeight': 'bold'
-}
+def get_interpolated_path(points, steps_per_segment=15):
+    path = []
+    if not points: return path
+    for i in range(len(points)-1):
+        lat_start, lon_start = points[i]
+        lat_end, lon_end = points[i+1]
+        for j in range(steps_per_segment):
+            path.append((
+                lat_start + (lat_end - lat_start) * j / steps_per_segment,
+                lon_start + (lon_end - lon_start) * j / steps_per_segment
+            ))
+    path.append(points[-1])
+    return path
 
-# --- 2. Layout Design ---
-app.layout = html.Div([
-    html.H1("GNSS PERFORMANCE SIMULATOR", style={'marginBottom': '20px', 'color': H_COLOR, 'letterSpacing': '2px', 'fontWeight': '900'}),
-    dcc.Store(id='map-view-store', data={'zoom': 17, 'center': {'lat': 25.033964, 'lon': 121.564468}}),
-
-    html.Div([
-        # --- Left Panel ---
-        html.Div([
-            html.Div([
-                html.H3("1. LINK BUDGET", style={'color': H_COLOR, 'marginTop': '0', 'letterSpacing': '1px'}),
-                html.Label("1a. Device Type (Polarization & Body Loss):", style={'fontWeight': 'bold', 'color': TEXT_COLOR}),
-                dcc.RadioItems(
-                    id='device-type-radio',
-                    options=[
-                        {'label': ' Pro Navigator (RHCP Ant)', 'value': 'Navigator'},
-                        {'label': ' Smartwatch (LP Ant)', 'value': 'Wearable'}
-                    ],
-                    value='Navigator',
-                    inputStyle={"marginRight": "5px"}, labelStyle={"display": "block", "marginBottom": "5px", "color": "#94a3b8"}
-                ),
-                html.Br(),
-                html.Label("1b. Sky Signal Strength (C/N0):", style={'color': TEXT_COLOR}),
-                dcc.Slider(
-                    id='sky-cn0-slider', min=20, max=50, step=1, value=42,
-                    marks={i: {'label': f'{i}', 'style': {'color': '#64748b'}} for i in range(20, 51, 5)},
-                ),
-                
-                html.Div([
-                    html.Label("1c. Antenna Efficiency (%) - Gain Impact:", style={'fontWeight': 'bold', 'color': ACCENT_GREEN, 'marginTop': '15px'}),
-                    dcc.Input(id='ant-eff-input', type='text', value='85.0', placeholder='e.g., 85', style=INPUT_STYLE)
-                ]),
-
-                html.Div([
-                    html.Label("1d. Noise Figure (NF) - dB:", style={'fontWeight': 'bold', 'color': ACCENT_RED, 'marginTop': '10px'}),
-                    dcc.Input(id='nf-input', type='text', value='2.0', placeholder='e.g., 2.0', style=INPUT_STYLE)
-                ]),
-                
-                html.Div(id='link-budget-info', style={'padding': '12px', 'marginTop': '15px', 'backgroundColor': '#0a0e17', 'borderRadius': '6px', 'fontSize': '13px', 'border': f'1px solid {BORDER_COLOR}', 'color': '#cbd5e1'}),
-            ], style={'backgroundColor': PANEL_BG, 'padding': '20px', 'borderRadius': '10px', 'marginBottom': '20px', 'border': f'1px solid {BORDER_COLOR}', 'boxShadow': '0 4px 6px rgba(0,0,0,0.3)'}),
-
-            html.H3("2. ENVIRONMENT SETTINGS", style={'color': H_COLOR, 'letterSpacing': '1px'}),
-            html.Div([
-                html.Label("True Coordinates (Lat, Lon):", style={'fontWeight': 'bold', 'color': TEXT_COLOR}),
-                dcc.Input(id='coord-input', type='text', value='25.033964, 121.564468', style=INPUT_STYLE, debounce=True),
-                html.Label("Tolerance Radius (m):", style={'fontWeight': 'bold', 'color': '#c084fc', 'marginTop': '10px'}),
-                dcc.Input(id='tolerance-input', type='text', value='5.0', style={**INPUT_STYLE, 'color': '#c084fc'}),
-            ]),
-            
-            html.Br(),
-            
-            html.Label("Map Display Style:", style={'fontWeight': 'bold', 'color': TEXT_COLOR}),
-            dcc.RadioItems(
-                id='map-style-radio',
-                options=[
-                    {'label': ' 🛰️ Satellite (Tech)', 'value': 'satellite'},
-                    {'label': ' 🌃 Dark (Cyber)', 'value': 'carto-darkmatter'},
-                    {'label': ' 🗺️ Light Street', 'value': 'open-street-map'}
-                ],
-                value='satellite', 
-                style={'marginBottom': '15px', 'marginTop': '5px'},
-                inputStyle={"marginRight": "5px"},
-                labelStyle={"marginRight": "12px", "display": "inline-block", "color": "#94a3b8", "fontSize": "13px"}
-            ),
-
-            html.Label("Enabled Constellations:", style={'fontWeight': 'bold', 'color': TEXT_COLOR}),
-            dcc.Checklist(
-                id='sys-checklist', options=[{'label': ' GPS', 'value': 'GPS'}, {'label': ' Galileo', 'value': 'Galileo'}, {'label': ' GLONASS', 'value': 'GLONASS'}, {'label': ' BeiDou', 'value': 'BeiDou'}],
-                value=['GPS'], style={'marginBottom': '10px'}, inputStyle={"marginRight": "5px"}, labelStyle={"display": "inline-block", "marginRight": "10px", "color": "#94a3b8"}
-            ),
-            
-            html.Label("Frequency Band:", style={'fontWeight': 'bold', 'color': ACCENT_RED}),
-            dcc.RadioItems(
-                id='freq-mode-radio', options=[{'label': ' Single-Band (L1)', 'value': 'L1'}, {'label': ' Dual-Band (L1+L5)', 'value': 'L1+L5'}],
-                value='L1', style={'marginBottom': '10px'}, inputStyle={"marginRight": "5px"}, labelStyle={"marginRight": "15px", "display": "inline-block", "color": "#94a3b8"}
-            ),
-            
-            html.Label("Max Satellite Channels:", style={'color': TEXT_COLOR}),
-            dcc.Slider(id='sat-count-slider', min=4, max=36, step=4, value=12, marks={i: {'label': f'{i}', 'style': {'color': '#64748b'}} for i in range(4, 37, 8)}),
-            
-            html.Div(id='metrics-panel', style={'marginTop': '20px', 'padding': '15px', 'backgroundColor': '#0a0e17', 'borderRadius': '8px', 'border': f'1px solid {BORDER_COLOR}', 'boxShadow': 'inset 0 2px 4px rgba(0,0,0,0.5)'})
-            
-        ], style={
-            'width': '30%', 'padding': '20px', 'backgroundColor': PANEL_BG, 'borderRadius': '12px', 
-            'boxShadow': '0 10px 15px -3px rgba(0,0,0,0.5)', 'height': '85vh', 'overflowY': 'auto',
-            'border': f'1px solid {BORDER_COLOR}'
-        }),
-        
-        # --- Right Panel ---
-        html.Div([
-            html.Div([
-                html.Div([dcc.Graph(id='skyplot-graph', config={'displayModeBar': False}, style={'height': '100%'})], style={'width': '49%', 'backgroundColor': PANEL_BG, 'borderRadius': '12px', 'padding': '10px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.3)', 'border': f'1px solid {BORDER_COLOR}'}),
-                html.Div([dcc.Graph(id='waveform-graph', config={'displayModeBar': False}, style={'height': '100%'})], style={'width': '49%', 'backgroundColor': PANEL_BG, 'borderRadius': '12px', 'padding': '10px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.3)', 'border': f'1px solid {BORDER_COLOR}'})
-            ], style={'display': 'flex', 'justifyContent': 'space-between', 'height': '40vh', 'marginBottom': '20px'}),
-            
-            html.Div([
-                dcc.Graph(id='map-graph', style={'height': '100%', 'borderRadius': '12px', 'overflow': 'hidden'})
-            ], style={'flexGrow': '1', 'backgroundColor': PANEL_BG, 'borderRadius': '12px', 'boxShadow': '0 4px 6px rgba(0,0,0,0.3)', 'border': f'1px solid {BORDER_COLOR}', 'padding': '5px'})
-            
-        ], style={'width': '68%', 'display': 'flex', 'flexDirection': 'column', 'height': '85vh'})
-        
-    ], style={'display': 'flex', 'justifyContent': 'space-between'})
-
-], style={'padding': '25px', 'fontFamily': '"Inter", "Segoe UI", Roboto, Helvetica, Arial, sans-serif', 'backgroundColor': BG_COLOR, 'minHeight': '100vh', 'color': TEXT_COLOR})
-
-# --- 3. Callbacks ---
-@app.callback(Output('coord-input', 'value'), [Input('coord-input', 'value'), Input('map-graph', 'clickData')])
-def sync_input_and_click(manual_input, click_data):
-    ctx = dash.callback_context
-    if not ctx.triggered: return manual_input
-    if ctx.triggered[0]['prop_id'].split('.')[0] == 'map-graph' and click_data:
-        return f"{click_data['points'][0]['lat']:.6f}, {click_data['points'][0]['lon']:.6f}"
-    return manual_input
-
-@app.callback(
-    [Output('map-graph', 'figure'), Output('skyplot-graph', 'figure'),
-     Output('waveform-graph', 'figure'), Output('metrics-panel', 'children'),
-     Output('link-budget-info', 'children')],
-    [
-     Input('sky-cn0-slider', 'value'),   
-     Input('sat-count-slider', 'value'), 
-     Input('coord-input', 'value'),      
-     Input('freq-mode-radio', 'value'),  
-     Input('sys-checklist', 'value'),    
-     Input('tolerance-input', 'value'),  
-     Input('device-type-radio', 'value'),
-     Input('nf-input', 'value'),         
-     Input('ant-eff-input', 'value'),
-     Input('map-style-radio', 'value')
-    ]
-)
-def update_dashboard(sky_cn0, max_sats, coord_str, freq_mode, selected_sys, tolerance_m, device_type, nf_val, ant_eff_percent, map_style):
-    input_lat, input_lon = parse_coordinate_string(coord_str)
+# --- 2. Sidebar (側邊欄控制面板) ---
+with st.sidebar:
+    st.markdown("<h2 style='color: #38bdf8;'>1. LINK BUDGET</h2>", unsafe_allow_html=True)
+    device_type = st.radio("1a. Device Type (Polarization):", ["Navigator", "Wearable"], format_func=lambda x: "Pro Navigator (RHCP Ant)" if x=="Navigator" else "Smartwatch (LP Ant)")
+    sky_cn0 = st.slider("1b. Sky Signal Strength (C/N0):", 20, 50, 42, 1)
+    ant_eff_str = st.text_input("1c. Antenna Efficiency (%) - Gain Impact:", value="85.0")
+    nf_str = st.text_input("1d. Noise Figure (NF) - dB:", value="2.0")
     
-    try: tolerance_m = float(tolerance_m)
-    except: tolerance_m = 5.0
-    try: nf_val = float(nf_val)
-    except: nf_val = 2.0
-    try: ant_eff_percent = float(ant_eff_percent)
-    except: ant_eff_percent = 85.0
-    ant_eff_percent = max(0.1, min(100.0, ant_eff_percent))
-    
-    dev = DEVICE_CONFIGS[device_type]
-    ant_loss_db = -10 * math.log10(ant_eff_percent / 100.0)
-    total_loss = ant_loss_db + dev['mismatch_loss'] + dev['body_loss']
-    effective_cn0 = max(10, sky_cn0 - total_loss - nf_val)
-    
-    link_budget_ui = html.Div([
-        html.Div([f"Selected Device: ", html.Span(dev['name'], style={'fontWeight': 'bold', 'color': dev['color']})]),
-        html.Hr(style={'margin': '8px 0', 'borderColor': '#334155'}),
-        html.Div(f"Sky Signal (C/N0): {sky_cn0} dB-Hz"),
-        html.Div(f"- Ant. Efficiency Loss ({ant_eff_percent:.1f}%): {ant_loss_db:.1f} dB", style={'color': '#f87171' if ant_loss_db > 2.0 else '#94a3b8'}),
-        html.Div(f"- Mismatch Loss (RHCP->LP): {dev['mismatch_loss']:.1f} dB", style={'color': '#f87171' if dev['mismatch_loss']>0 else '#94a3b8'}),
-        html.Div(f"- Body Absorption Loss: {dev['body_loss']:.1f} dB", style={'color': '#f87171' if dev['body_loss']>0 else '#94a3b8'}),
-        html.Div(f"- Circuit Noise Figure (NF): {nf_val:.1f} dB", style={'color': '#f87171' if nf_val > 2.5 else '#94a3b8'}),
-        html.Hr(style={'margin': '8px 0', 'borderColor': '#334155'}),
-        html.Div([f"Effective Baseband C/N0: ", html.Span(f"{effective_cn0:.1f} dB-Hz", style={'fontWeight': '900', 'fontSize': '1.3em', 'color': '#00e5ff', 'textShadow': '0 0 5px rgba(0,229,255,0.5)'})]),
-    ])
-    
-    L1_TRACKING_LIMIT = 22.0
-    L5_TRACKING_LIMIT = 23.5  
-    
-    complete_loss = False
-    l5_lost_lock = False
-    
-    if effective_cn0 < L1_TRACKING_LIMIT:
-        complete_loss = True 
-        
-    if freq_mode == 'L1+L5': 
-        if effective_cn0 >= L5_TRACKING_LIMIT:
-            base_error, noise_factor = 0.000015, (50 - effective_cn0 + 1) / 30 
-        else:
-            l5_lost_lock = True 
-            if not complete_loss:
-                base_error, noise_factor = 0.00003, (50 - effective_cn0 + 1) / 5 
-            else:
-                base_error, noise_factor = 0.0001, 100 
-    else: 
-        if not complete_loss:
-            base_error, noise_factor = 0.00003, (50 - effective_cn0 + 1) / 10 
-        else:
-            base_error, noise_factor = 0.0001, 100 
+    st.markdown("<h2 style='color: #38bdf8; margin-top: 20px;'>2. ENVIRONMENT</h2>", unsafe_allow_html=True)
+    coord_str = st.text_input("True Coordinates (Lat, Lon):", value="25.033964, 121.564468")
+    tolerance_str = st.text_input("Tolerance Radius (m):", value="5.0")
+    map_style = st.radio("Map Display Style:", ["satellite", "carto-darkmatter", "open-street-map"], format_func=lambda x: "🛰️ Satellite (Tech)" if x=="satellite" else "🌃 Dark (Cyber)" if x=="carto-darkmatter" else "🗺️ Light Street")
+    selected_sys = st.multiselect("Enabled Constellations:", ["GPS", "Galileo", "GLONASS", "BeiDou"], default=["GPS"])
+    freq_mode = st.radio("Frequency Band:", ["L1", "L1+L5"], format_func=lambda x: "Single-Band (L1)" if x=="L1" else "Dual-Band (L1+L5)")
+    max_sats = st.slider("Max Satellite Channels:", 4, 36, 12, 4)
 
+    # DYNAMIC模擬引擎 (Dynamic Engine)
+    st.markdown("<h2 style='color: #f43f5e; margin-top: 20px;'>3. DYNAMIC KINEMATIC ENGINE</h2>", unsafe_allow_html=True)
+    scenario = st.selectbox(
+        "Select Stress Test Scenario:",
+        ["🔴 Urban Canyon (Taipei 101 Perimeter)", "🟢 Open Sky (Kaohsiung Park Loop)"]
+    )
+    run_sim = st.button("▶️ RUN DYNAMIC TEST", use_container_width=True, type="primary")
+
+# --- 核心邏輯解析 ---
+input_lat, input_lon = parse_coordinate_string(coord_str)
+try: tolerance_m = float(tolerance_str)
+except: tolerance_m = 5.0
+try: nf_val = float(nf_str)
+except: nf_val = 2.0
+try: ant_eff_percent = float(ant_eff_str)
+except: ant_eff_percent = 85.0
+ant_eff_percent = max(0.1, min(100.0, ant_eff_percent))
+
+dev = DEVICE_CONFIGS[device_type]
+ant_loss_db = -10 * math.log10(ant_eff_percent / 100.0)
+total_loss = ant_loss_db + dev['mismatch_loss'] + dev['body_loss']
+
+# --- Main Area 渲染 ---
+st.markdown(f"<h1 style='color: #38bdf8; letter-spacing: 2px;'>GNSS PERFORMANCE SIMULATOR</h1>", unsafe_allow_html=True)
+
+# 佔位符設定
+metrics_placeholder = st.empty()
+st.markdown("---")
+
+# 靜態波形與天空圖
+chart_layout_base = dict(paper_bgcolor='#0e1117', plot_bgcolor='#0e1117', font=dict(color='#94a3b8'), margin={"r":20,"t":40,"l":20,"b":30})
+c_chart1, c_chart2 = st.columns(2)
+
+with c_chart1:
+    fig_sky = go.Figure()
     pool_sats = [sat for sat in SATELLITE_ALMANAC if sat['sys'] in selected_sys]
     visible_sats = pool_sats[:max_sats]
     actual_sat_count = len(visible_sats) 
-        
-    if actual_sat_count < 4: dop_multiplier = 10.0
-    else: dop_multiplier = max(0.5, 1.0 + (12 - actual_sat_count) * 0.1) * dev['mp_factor']
-        
-    std_dev = base_error * noise_factor * dop_multiplier
-    simulated_lats = np.random.normal(input_lat, std_dev, 100)
-    simulated_lons = np.random.normal(input_lon, std_dev, 100)
-    avg_error_m = std_dev * 111320
-    error_percent = (avg_error_m / tolerance_m) * 100
-    
-    ttff_val, ttff_str, ttff_color = 0, "", ""
-    if complete_loss or actual_sat_count < 4:
-        ttff_str, ttff_color = "Cannot Fix (Loss of Lock)", "#ff003c"
-        error_percent = 999.9 
-    else:
-        if freq_mode == 'L1+L5' and not l5_lost_lock:
-            if effective_cn0 >= 35: ttff_val = 35
-            elif effective_cn0 >= 28: ttff_val = 35 + (35 - effective_cn0) * 2
-            else: ttff_val = 49 + (28 - effective_cn0) * 5
-        else:
-            if effective_cn0 >= 38: ttff_val = 35
-            elif effective_cn0 >= 32: ttff_val = 35 + (38 - effective_cn0) * 5
-            elif effective_cn0 >= 28: ttff_val = 65 + (32 - effective_cn0) * 15
-            else: ttff_val = 999 
-        
-        if actual_sat_count > 12 and ttff_val != 999: ttff_val = int(ttff_val * 0.85)
-        if ttff_val == 999: ttff_str, ttff_color = "> 5 mins (Failed)", "#ff003c"
-        else: ttff_str, ttff_color = f"~ {int(ttff_val)} sec", ("#39ff14" if ttff_val <= 45 else "#eab308")
-
-    error_color = "#39ff14" if error_percent <= 100 else "#ff003c"
-    warning_ui = None
-    if complete_loss:
-        warning_ui = html.Div("💀 FATAL: Signal below L1 tracking limit (22.0 dB). Receiver lost lock!", style={'color': '#fff', 'backgroundColor': '#7f1d1d', 'padding': '10px', 'borderRadius': '4px', 'marginBottom': '10px', 'fontSize': '13px', 'fontWeight': 'bold', 'border': '1px solid #ef4444'})
-    elif freq_mode == 'L1+L5' and l5_lost_lock:
-        warning_ui = html.Div("⚠️ WARNING: Signal below L5 tracking limit (23.5 dB). Downgraded to L1 only!", style={'color': '#fff', 'backgroundColor': '#9a3412', 'padding': '10px', 'borderRadius': '4px', 'marginBottom': '10px', 'fontSize': '13px', 'fontWeight': 'bold', 'border': '1px solid #f97316'})
-
-    metrics_ui = html.Div([
-        html.H4("📊 PERFORMANCE METRICS", style={'marginTop': '0', 'marginBottom': '15px', 'color': '#f8fafc', 'letterSpacing': '1px'}),
-        warning_ui if warning_ui else html.Span(),
-        html.Div([f"Avg. Error Distance: ", html.Span(f"{avg_error_m:.1f} m", style={'color': '#e2e8f0', 'fontWeight': 'bold'})], style={'marginBottom': '5px'}),
-        html.Div([f"Positioning EVM: ", html.Span(f"{error_percent:.1f}%" if error_percent != 999.9 else "N/A", style={'color': error_color, 'fontWeight': 'bold', 'textShadow': f'0 0 5px {error_color}'})], style={'marginBottom': '5px'}),
-        html.Div([f"Est. Cold Start TTFF: ", html.Span(ttff_str, style={'color': ttff_color, 'fontWeight': 'bold', 'textShadow': f'0 0 5px {ttff_color}'})]),
-    ])
-
-    chart_layout_base = dict(
-        paper_bgcolor='#131a26',
-        plot_bgcolor='#131a26',
-        font=dict(color='#94a3b8'),
-        margin={"r":20,"t":40,"l":20,"b":30}
-    )
-
-    circle_lats, circle_lons = generate_circle_polygon(input_lat, input_lon, tolerance_m)
-    fig_map = go.Figure()
-    
-    fig_map.add_trace(go.Scattermapbox(lat=circle_lats, lon=circle_lons, mode='lines', fill='toself', fillcolor='rgba(192, 132, 252, 0.1)', line=dict(color='#c084fc', width=2), name=f'Tolerance ({tolerance_m}m)'))
-    fig_map.add_trace(go.Scattermapbox(lat=simulated_lats, lon=simulated_lons, mode='markers', marker=dict(size=8, color=dev['color'], opacity=0.6), name='Simulated Fix'))
-    fig_map.add_trace(go.Scattermapbox(lat=[input_lat], lon=[input_lon], mode='markers', marker=dict(size=18, color='#ff4081', symbol='star'), name='Ground Truth'))
-    
-    # 🛠️ 關鍵修復：用真實座標當作 uirevision_base
-    # 只要座標沒改，你拉動任何滑桿，地圖的縮放和平移都會完美保留！
-    uirevision_base = f"{input_lat:.6f}_{input_lon:.6f}"
-    map_center = dict(lat=input_lat, lon=input_lon)
-    map_zoom = 17
-    
-    if map_style == 'satellite':
-        mapbox_args = dict(
-            style="white-bg",
-            center=map_center, zoom=map_zoom,
-            layers=[dict(sourcetype="raster", source=["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"], below="traces")]
-        )
-    else:
-        mapbox_args = dict(style=map_style, center=map_center, zoom=map_zoom)
-
-    fig_map.update_layout(
-        mapbox=mapbox_args, 
-        margin={"r":0,"t":0,"l":0,"b":0}, 
-        uirevision=uirevision_base, # 🛡️ 守護地圖視角的魔法參數
-        paper_bgcolor='#131a26'
-    )
-
-    fig_sky = go.Figure()
     for sys_name in ['GPS', 'Galileo', 'GLONASS', 'BeiDou']:
         sys_sats = [s for s in visible_sats if s['sys'] == sys_name]
         if sys_sats: fig_sky.add_trace(go.Scatterpolar(r=[90 - sat["el"] for sat in sys_sats], theta=[sat["az"] for sat in sys_sats], mode='markers+text', marker=dict(size=12, color=SYS_COLORS[sys_name], line=dict(color='#fff', width=1)), text=[sat["prn"] for sat in sys_sats], textposition="top center", name=sys_name))
-    
-    fig_sky.update_layout(
-        **chart_layout_base,
-        title=dict(text="Constellation Skyplot", font=dict(color='#e2e8f0', size=16)),
-        showlegend=True, legend=dict(font=dict(color='#94a3b8'), orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5),
-        polar=dict(
-            bgcolor='#0a0e17',
-            angularaxis=dict(rotation=90, direction="clockwise", gridcolor='#334155', linecolor='#334155', tickvals=[0, 45, 90, 135, 180, 225, 270, 315], ticktext=['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'], tickfont=dict(color='#94a3b8')), 
-            radialaxis=dict(range=[0, 90], gridcolor='#334155', showline=False, tickfont=dict(color='#94a3b8'))
-        )
-    )
+    fig_sky.update_layout(**chart_layout_base, title=dict(text="Constellation Skyplot", font=dict(color='#e2e8f0', size=16)), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=-0.15, xanchor="center", x=0.5), polar=dict(bgcolor='#0e1117', angularaxis=dict(rotation=90, direction="clockwise", gridcolor='#334155', linecolor='#334155'), radialaxis=dict(range=[0, 90], gridcolor='#334155', showline=False)))
+    st.plotly_chart(fig_sky, use_container_width=True)
 
-    waveform_noise_std = (50 - effective_cn0) * 0.08 
+with c_chart2:
+    effective_cn0_static = max(10, sky_cn0 - total_loss - nf_val)
+    waveform_noise_std = (50 - effective_cn0_static) * 0.08 
     received_l1 = PRN_L1 + np.random.normal(0, waveform_noise_std, len(PRN_L1))
     received_l5 = PRN_L5 + np.random.normal(0, waveform_noise_std, len(PRN_L5))
     fig_wave = go.Figure()
-    
-    l5_is_active = (freq_mode == 'L1+L5') and not l5_lost_lock
+    l5_is_active = (freq_mode == 'L1+L5') and (effective_cn0_static >= 23.5)
     l5_opacity = 0.8 if l5_is_active else 0.2
     l5_color = '#ff003c' if l5_is_active else '#475569' 
-    
     fig_wave.add_trace(go.Scatter(x=TIME_L1, y=received_l1 + 2, mode='lines+markers', line=dict(color='#475569', width=1), marker=dict(size=3, color='#475569'), name='L1 Rx'))
     fig_wave.add_trace(go.Scatter(x=TIME_L1, y=PRN_L1 + 2, mode='lines', line=dict(color='#00e5ff', width=2, shape='hv'), name='L1 Ideal'))
     fig_wave.add_trace(go.Scatter(x=TIME_L5, y=received_l5 - 2, mode='lines', line=dict(color='#475569', width=1), opacity=l5_opacity, name='L5 Rx'))
     fig_wave.add_trace(go.Scatter(x=TIME_L5, y=PRN_L5 - 2, mode='lines', line=dict(color=l5_color, width=2, shape='hv'), opacity=l5_opacity, name='L5 Ideal'))
-    
-    fig_wave.update_layout(
-        **chart_layout_base,
-        title=dict(text="Baseband Waveform (L1 vs L5)", font=dict(color='#e2e8f0', size=16)),
-        xaxis=dict(gridcolor='#334155', zeroline=False),
-        yaxis=dict(range=[-4.5, 4.5], tickvals=[-2, 2], ticktext=['L5 Band', 'L1 Band'], gridcolor='#334155', zeroline=True, zerolinecolor='#475569'),
-        legend=dict(font=dict(color='#94a3b8'), orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    
-    return fig_map, fig_sky, fig_wave, metrics_ui, link_budget_ui
+    fig_wave.update_layout(**chart_layout_base, title=dict(text="Baseband Waveform", font=dict(color='#e2e8f0', size=16)), yaxis=dict(range=[-4.5, 4.5], tickvals=[-2, 2], ticktext=['L5 Band', 'L1 Band'], gridcolor='#334155', zeroline=True, zerolinecolor='#475569'), legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+    st.plotly_chart(fig_wave, use_container_width=True)
 
-if __name__ == '__main__':
-    app.run(debug=True)
+map_placeholder = st.empty()
+
+# --- 🚀 模式分流：靜態顯示 vs 動態模擬 ---
+if not run_sim:
+    # 【靜態模式】
+    effective_cn0 = effective_cn0_static
+    complete_loss = effective_cn0 < 22.0
+    l5_lost_lock = False
+
+    if freq_mode == 'L1+L5': 
+        if effective_cn0 >= 23.5: base_error, noise_factor = 0.000015, (50 - effective_cn0 + 1) / 30 
+        else:
+            l5_lost_lock = True 
+            base_error, noise_factor = (0.0001, 100) if complete_loss else (0.00003, (50 - effective_cn0 + 1) / 5)
+    else: 
+        base_error, noise_factor = (0.0001, 100) if complete_loss else (0.00003, (50 - effective_cn0 + 1) / 10)
+
+    dop_multiplier = 10.0 if actual_sat_count < 4 else max(0.5, 1.0 + (12 - actual_sat_count) * 0.1) * dev['mp_factor']
+    std_dev = base_error * noise_factor * dop_multiplier
+    simulated_lats = np.random.normal(input_lat, std_dev, 100)
+    simulated_lons = np.random.normal(input_lon, std_dev, 100)
+    avg_error_m = std_dev * 111320
+    error_percent = 999.9 if (complete_loss or actual_sat_count < 4) else (avg_error_m / tolerance_m) * 100
+
+    status_str, status_color = ("LOSS OF LOCK", "#ff003c") if complete_loss else ("TRACKING", "#39ff14")
+
+    # 渲染靜態指標
+    with metrics_placeholder.container():
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            st.markdown(f"<div style='background-color: #131a26; padding: 15px; border-radius: 10px; border: 1px solid {BORDER_COLOR};'><div style='color: #00e5ff; font-weight: bold; font-size: 1.2em;'>Static Effective C/N0: {effective_cn0:.1f} dB-Hz</div></div>", unsafe_allow_html=True)
+        with col2:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Avg. Error Distance", f"{avg_error_m:.1f} m")
+            m2.metric("Positioning EVM", "N/A" if error_percent == 999.9 else f"{error_percent:.1f}%", delta="Pass" if error_percent <= 100 else "Fail", delta_color="normal" if error_percent <= 100 else "inverse")
+            m3.markdown(f"<div style='background-color: #131a26; padding: 15px; border-radius: 10px; border: 1px solid #1f2937;'><div style='color: #94a3b8; font-size: 14px;'>Receiver Status</div><div style='color: {status_color}; font-size: 20px; font-weight: bold;'>{status_str}</div></div>", unsafe_allow_html=True)
+
+    # 渲染靜態地圖
+    circle_lats, circle_lons = generate_circle_polygon(input_lat, input_lon, tolerance_m)
+    fig_map = go.Figure()
+    fig_map.add_trace(go.Scattermapbox(lat=circle_lats, lon=circle_lons, mode='lines', fill='toself', fillcolor='rgba(192, 132, 252, 0.1)', line=dict(color='#c084fc', width=2)))
+    fig_map.add_trace(go.Scattermapbox(lat=simulated_lats, lon=simulated_lons, mode='markers', marker=dict(size=8, color=dev['color'], opacity=0.6)))
+    fig_map.add_trace(go.Scattermapbox(lat=[input_lat], lon=[input_lon], mode='markers', marker=dict(size=18, color='#ff4081', symbol='star')))
+    mapbox_args = dict(style="white-bg", center=dict(lat=input_lat, lon=input_lon), zoom=17, layers=[dict(sourcetype="raster", source=["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"], below="traces")]) if map_style == 'satellite' else dict(style=map_style, center=dict(lat=input_lat, lon=input_lon), zoom=17)
+    fig_map.update_layout(mapbox=mapbox_args, margin={"r":0,"t":0,"l":0,"b":0}, height=500, uirevision=f"{input_lat}_{input_lon}", paper_bgcolor='#0e1117', showlegend=False)
+    map_placeholder.plotly_chart(fig_map, use_container_width=True)
+
+else:
+    # 【動態模擬模式】
+    if "101" in scenario:
+        # 🛡️ 關鍵修復：將原本偏西的座標整體向東修正 0.0007 度 (約 65 公尺)
+        # 現在真值路徑應該會精確落在 信義路/市府路/松壽路/松智路 的車道中間！
+        route_waypoints = [
+            (25.0326 + 0.0002, 121.5616 + 0.0007), # SW Corner (信義/市府)
+            (25.0358 - 0.0004, 121.5616 + 0.0007), # NW Corner (松壽/市府)
+            (25.0358 - 0.0004, 121.5646 + 0.0002), # NE Corner (松壽/松智)
+            (25.0326 + 0.0002, 121.5646 + 0.0002), # SE Corner (信義/松智)
+            (25.0326 + 0.0002, 121.5616 + 0.0007)  # 回到終點
+        ]
+        # 地圖中心也要跟著稍微東移，讓繞圈居中
+        map_center_dyn = dict(lat=25.0342, lon=121.5638) 
+        zoom_level_dyn = 16.5
+        true_path = get_interpolated_path(route_waypoints, steps_per_segment=15) 
+    else:
+        # 都會公園小徑 (保持不變，上一版已經修正)
+        park_loop_points = [
+            (22.731306, 120.307000), # Southern tip (Start/End)
+            (22.731778, 120.307301), # NE turn
+            (22.732156, 120.307223), # Northern peak (tear top)
+            (22.732252, 120.307010), # NW turn
+            (22.731853, 120.306894), # Western curve
+            (22.731306, 120.307000)  # Back to tip
+        ]
+        map_center_dyn = dict(lat=22.7317, lon=120.3071)
+        zoom_level_dyn = 17.2 
+        true_path = get_interpolated_path(park_loop_points, steps_per_segment=13) 
+
+    # 歷史拖尾記憶體
+    trail_lats, trail_lons = [], []
+    true_trail_lats, true_trail_lons = [], []
+
+    # 動態引擎開始跑步
+    for step, (cur_lat, cur_lon) in enumerate(true_path):
+        dyn_cn0 = sky_cn0
+        current_env_status = "NORMAL LOS"
+        status_color = "#39ff14"
+        
+        if "101" in scenario:
+            if 15 <= step < 30: 
+                dyn_cn0 -= 18
+                current_env_status = "SEVERE NLOS (Canyon)"
+                status_color = "#ff003c"
+            elif 30 <= step < 45: 
+                dyn_cn0 -= 8
+                current_env_status = "PARTIAL SHADOWING"
+                status_color = "#eab308"
+            else: dyn_cn0 -= 2
+        else: 
+            scintillation = np.random.uniform(-3.0, 1.0) 
+            dyn_cn0 += (3.0 + scintillation) 
+            current_env_status = "OPEN SKY w/ TREE FADING"
+            status_color = "#00e5ff"
+
+        effective_cn0 = max(10, dyn_cn0 - total_loss - nf_val)
+        complete_loss = effective_cn0 < 22.0
+        l5_lost_lock = False
+
+        if freq_mode == 'L1+L5': 
+            if effective_cn0 >= 23.5: base_error, noise_factor = 0.000015, (50 - effective_cn0 + 1) / 30 
+            else:
+                l5_lost_lock = True 
+                base_error, noise_factor = (0.0001, 50) if complete_loss else (0.00003, (50 - effective_cn0 + 1) / 5)
+        else: 
+            base_error, noise_factor = (0.0001, 50) if complete_loss else (0.00003, (50 - effective_cn0 + 1) / 10)
+
+        turn_angle = 0
+        if step > 0 and step < len(true_path)-1:
+            prev_lat, prev_lon = true_path[step-1]
+            next_lat, next_lon = true_path[step+1]
+            bearing1 = math.atan2(cur_lon - prev_lon, cur_lat - prev_lat)
+            bearing2 = math.atan2(next_lon - cur_lon, next_lat - cur_lat)
+            turn_angle = abs(bearing2 - bearing1)
+            if turn_angle > 0.5: dev['mp_factor'] *= 1.3 
+
+        dop_multiplier = 10.0 if actual_sat_count < 4 else max(0.5, 1.0 + (12 - actual_sat_count) * 0.1) * dev['mp_factor']
+        std_dev = base_error * noise_factor * dop_multiplier
+        
+        if turn_angle > 0.5: dev['mp_factor'] /= 1.3
+        
+        sim_lat = np.random.normal(cur_lat, std_dev)
+        sim_lon = np.random.normal(cur_lon, std_dev)
+        trail_lats.append(sim_lat)
+        trail_lons.append(sim_lon)
+        true_trail_lats.append(cur_lat)
+        true_trail_lons.append(cur_lon)
+        
+        avg_error_m = std_dev * 111320
+        error_percent = 999.9 if (complete_loss or actual_sat_count < 4) else (avg_error_m / tolerance_m) * 100
+
+        with metrics_placeholder.container():
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                st.markdown(f"<div style='background-color: #131a26; padding: 15px; border-radius: 10px; border: 1px solid {status_color}; box-shadow: 0 0 10px {status_color};'><div style='color: #94a3b8; font-size: 14px;'>Live Effective C/N0</div><div style='color: {status_color}; font-weight: bold; font-size: 1.5em;'>{effective_cn0:.1f} dB-Hz</div></div>", unsafe_allow_html=True)
+            with col2:
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Live Avg. Error", f"{avg_error_m:.1f} m")
+                m2.metric("Live EVM", "N/A" if error_percent == 999.9 else f"{error_percent:.1f}%", delta="Tracking" if not complete_loss else "Loss of Lock", delta_color="normal" if not complete_loss else "inverse")
+                m3.markdown(f"<div style='background-color: #131a26; padding: 15px; border-radius: 10px; border: 1px solid #1f2937;'><div style='color: #94a3b8; font-size: 14px;'>Environment Profile</div><div style='color: {status_color}; font-size: 18px; font-weight: bold;'>{current_env_status}</div></div>", unsafe_allow_html=True)
+
+        circle_lats, circle_lons = generate_circle_polygon(cur_lat, cur_lon, tolerance_m)
+        fig_map_dyn = go.Figure()
+        
+        fig_map_dyn.add_trace(go.Scattermapbox(lat=true_trail_lats, lon=true_trail_lons, mode='lines', line=dict(color='#ff4081', width=3), name='True Path'))
+        fig_map_dyn.add_trace(go.Scattermapbox(lat=trail_lats, lon=trail_lons, mode='lines+markers', marker=dict(size=6, color=dev['color'], opacity=0.6), line=dict(color=dev['color'], width=2), name='Sim Track'))
+        fig_map_dyn.add_trace(go.Scattermapbox(lat=circle_lats, lon=circle_lons, mode='lines', fill='toself', fillcolor='rgba(192, 132, 252, 0.1)', line=dict(color='#c084fc', width=2), name=f'Tolerance ({tolerance_m}m)'))
+        fig_map_dyn.add_trace(go.Scattermapbox(lat=[cur_lat], lon=[cur_lon], mode='markers', marker=dict(size=18, color='#ff4081', symbol='star'), name='Current True'))
+        
+        mapbox_args_dyn = dict(style="white-bg", center=map_center_dyn, zoom=zoom_level_dyn, layers=[dict(sourcetype="raster", source=["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"], below="traces")])
+        fig_map_dyn.update_layout(mapbox=mapbox_args_dyn, margin={"r":0,"t":0,"l":0,"b":0}, height=500, uirevision="dynamic_view_locked", paper_bgcolor='#0e1117', showlegend=False)
+        
+        map_placeholder.plotly_chart(fig_map_dyn, use_container_width=True)
+        time.sleep(0.12)
