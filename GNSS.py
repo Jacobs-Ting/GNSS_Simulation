@@ -90,7 +90,13 @@ with st.sidebar:
     device_type = st.radio("1a. Device Type (Polarization):", ["Navigator", "Wearable"], format_func=lambda x: "Pro Navigator (RHCP Ant)" if x=="Navigator" else "Smartwatch (LP Ant)")
     sky_cn0 = st.slider("1b. Sky Signal Strength (C/N0):", 20, 50, 42, 1)
     ant_eff_str = st.text_input("1c. Antenna Efficiency (%) - Gain Impact:", value="85.0")
-    nf_str = st.text_input("1d. Noise Figure (NF) - dB:", value="2.0")
+    
+    # 🚀 終極版 RF 前端 Friis 計算區域
+    st.markdown("<h3 style='color: #a78bfa; font-size: 16px; margin-top: 15px;'>1d. RF Front-End (Friis Formula)</h3>", unsafe_allow_html=True)
+    pre_filter_loss = st.number_input("Pre-Filter Loss (dB):", value=1.0, step=0.1)
+    lna_gain = st.number_input("LNA Gain (dB):", value=18.0, step=0.5)
+    lna_nf = st.number_input("LNA NF (dB):", value=1.2, step=0.1)
+    post_lna_nf = st.number_input("Post-LNA/RFIC NF (dB):", value=4.0, step=0.1)
     
     st.markdown("<h2 style='color: #38bdf8; margin-top: 20px;'>2. ENVIRONMENT</h2>", unsafe_allow_html=True)
     coord_str = st.text_input("True Coordinates (Lat, Lon):", value="25.033964, 121.564468")
@@ -100,7 +106,6 @@ with st.sidebar:
     freq_mode = st.radio("Frequency Band:", ["L1", "L1+L5"], format_func=lambda x: "Single-Band (L1)" if x=="L1" else "Dual-Band (L1+L5)")
     max_sats = st.slider("Max Satellite Channels:", 4, 36, 12, 4)
 
-    # DYNAMIC模擬引擎 (Dynamic Engine)
     st.markdown("<h2 style='color: #f43f5e; margin-top: 20px;'>3. DYNAMIC KINEMATIC ENGINE</h2>", unsafe_allow_html=True)
     scenario = st.selectbox(
         "Select Stress Test Scenario:",
@@ -108,28 +113,48 @@ with st.sidebar:
     )
     run_sim = st.button("▶️ RUN DYNAMIC TEST", use_container_width=True, type="primary")
 
-# --- 核心邏輯解析 ---
+# --- 核心邏輯解析與 Friis 計算 ---
 input_lat, input_lon = parse_coordinate_string(coord_str)
 try: tolerance_m = float(tolerance_str)
 except: tolerance_m = 5.0
-try: nf_val = float(nf_str)
-except: nf_val = 2.0
 try: ant_eff_percent = float(ant_eff_str)
 except: ant_eff_percent = 85.0
 ant_eff_percent = max(0.1, min(100.0, ant_eff_percent))
 
+# 📐 Friis 公式計算 Final LNA NF
+# 1. 將 dB 轉成線性值 (Linear scale)
+f_pre = 10 ** (pre_filter_loss / 10)
+g_pre = 10 ** (-pre_filter_loss / 10) # 濾波器的增益是負的 loss
+f_lna = 10 ** (lna_nf / 10)
+g_lna = 10 ** (lna_gain / 10)
+f_post = 10 ** (post_lna_nf / 10)
+
+# 2. 套用 Friis Cascaded Noise Factor formula
+f_total = f_pre + (f_lna - 1) / g_pre + (f_post - 1) / (g_pre * g_lna)
+
+# 3. 轉回 dB 成為 Final LNA NF (System NF)
+nf_val = 10 * math.log10(f_total)
+
+# 鏈路損耗計算
 dev = DEVICE_CONFIGS[device_type]
 ant_loss_db = -10 * math.log10(ant_eff_percent / 100.0)
 total_loss = ant_loss_db + dev['mismatch_loss'] + dev['body_loss']
 
 # --- Main Area 渲染 ---
 st.markdown(f"<h1 style='color: #38bdf8; letter-spacing: 2px;'>GNSS PERFORMANCE SIMULATOR</h1>", unsafe_allow_html=True)
-
-# 佔位符設定
-metrics_placeholder = st.empty()
 st.markdown("---")
 
-# 靜態波形與天空圖
+col_cn0, col_metrics = st.columns([1, 2])
+with col_cn0:
+    ui_cn0_box = st.empty()
+with col_metrics:
+    m1, m2, m3 = st.columns(3)
+    with m1: ui_error_box = st.empty()
+    with m2: ui_evm_box = st.empty()
+    with m3: ui_status_box = st.empty()
+
+st.markdown("---")
+
 chart_layout_base = dict(paper_bgcolor='#0e1117', plot_bgcolor='#0e1117', font=dict(color='#94a3b8'), margin={"r":20,"t":40,"l":20,"b":30})
 c_chart1, c_chart2 = st.columns(2)
 
@@ -164,7 +189,6 @@ map_placeholder = st.empty()
 
 # --- 🚀 模式分流：靜態顯示 vs 動態模擬 ---
 if not run_sim:
-    # 【靜態模式】
     effective_cn0 = effective_cn0_static
     complete_loss = effective_cn0 < 22.0
     l5_lost_lock = False
@@ -186,18 +210,12 @@ if not run_sim:
 
     status_str, status_color = ("LOSS OF LOCK", "#ff003c") if complete_loss else ("TRACKING", "#39ff14")
 
-    # 渲染靜態指標
-    with metrics_placeholder.container():
-        col1, col2 = st.columns([1, 2])
-        with col1:
-            st.markdown(f"<div style='background-color: #131a26; padding: 15px; border-radius: 10px; border: 1px solid {BORDER_COLOR};'><div style='color: #00e5ff; font-weight: bold; font-size: 1.2em;'>Static Effective C/N0: {effective_cn0:.1f} dB-Hz</div></div>", unsafe_allow_html=True)
-        with col2:
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Avg. Error Distance", f"{avg_error_m:.1f} m")
-            m2.metric("Positioning EVM", "N/A" if error_percent == 999.9 else f"{error_percent:.1f}%", delta="Pass" if error_percent <= 100 else "Fail", delta_color="normal" if error_percent <= 100 else "inverse")
-            m3.markdown(f"<div style='background-color: #131a26; padding: 15px; border-radius: 10px; border: 1px solid #1f2937;'><div style='color: #94a3b8; font-size: 14px;'>Receiver Status</div><div style='color: {status_color}; font-size: 20px; font-weight: bold;'>{status_str}</div></div>", unsafe_allow_html=True)
+    # 寫入靜態數據與 Friis 結果
+    ui_cn0_box.markdown(f"<div style='background-color: #131a26; padding: 15px; border-radius: 10px; border: 1px solid {BORDER_COLOR};'><div style='color: #00e5ff; font-weight: bold; font-size: 1.2em;'>Static Effective C/N0: {effective_cn0:.1f} dB-Hz</div><div style='color: #a78bfa; font-size: 0.9em; margin-top: 5px;'>⚙️ Final LNA NF (Friis): {nf_val:.2f} dB</div></div>", unsafe_allow_html=True)
+    ui_error_box.metric("Avg. Error Distance", f"{avg_error_m:.1f} m")
+    ui_evm_box.metric("Positioning EVM", "N/A" if error_percent == 999.9 else f"{error_percent:.1f}%", delta="Pass" if error_percent <= 100 else "Fail", delta_color="normal" if error_percent <= 100 else "inverse")
+    ui_status_box.markdown(f"<div style='background-color: #131a26; padding: 15px; border-radius: 10px; border: 1px solid #1f2937;'><div style='color: #94a3b8; font-size: 14px;'>Receiver Status</div><div style='color: {status_color}; font-size: 20px; font-weight: bold;'>{status_str}</div></div>", unsafe_allow_html=True)
 
-    # 渲染靜態地圖
     circle_lats, circle_lons = generate_circle_polygon(input_lat, input_lon, tolerance_m)
     fig_map = go.Figure()
     fig_map.add_trace(go.Scattermapbox(lat=circle_lats, lon=circle_lons, mode='lines', fill='toself', fillcolor='rgba(192, 132, 252, 0.1)', line=dict(color='#c084fc', width=2)))
@@ -208,41 +226,38 @@ if not run_sim:
     map_placeholder.plotly_chart(fig_map, use_container_width=True)
 
 else:
-    # 【動態模擬模式】
     if "101" in scenario:
-        # 🛡️ 關鍵修復：將原本偏西的座標整體向東修正 0.0007 度 (約 65 公尺)
-        # 現在真值路徑應該會精確落在 信義路/市府路/松壽路/松智路 的車道中間！
         route_waypoints = [
-            (25.0326 + 0.0002, 121.5616 + 0.0007), # SW Corner (信義/市府)
-            (25.0358 - 0.0004, 121.5616 + 0.0007), # NW Corner (松壽/市府)
-            (25.0358 - 0.0004, 121.5646 + 0.0002), # NE Corner (松壽/松智)
-            (25.0326 + 0.0002, 121.5646 + 0.0002), # SE Corner (信義/松智)
-            (25.0326 + 0.0002, 121.5616 + 0.0007)  # 回到終點
+            (25.0326 + 0.0002, 121.5616 + 0.0007),
+            (25.0358 - 0.0004, 121.5616 + 0.0007),
+            (25.0358 - 0.0004, 121.5646 + 0.0002),
+            (25.0326 + 0.0002, 121.5646 + 0.0002),
+            (25.0326 + 0.0002, 121.5616 + 0.0007)
         ]
-        # 地圖中心也要跟著稍微東移，讓繞圈居中
         map_center_dyn = dict(lat=25.0342, lon=121.5638) 
         zoom_level_dyn = 16.5
         true_path = get_interpolated_path(route_waypoints, steps_per_segment=15) 
     else:
-        # 都會公園小徑 (保持不變，上一版已經修正)
         park_loop_points = [
-            (22.731306, 120.307000), # Southern tip (Start/End)
-            (22.731778, 120.307301), # NE turn
-            (22.732156, 120.307223), # Northern peak (tear top)
-            (22.732252, 120.307010), # NW turn
-            (22.731853, 120.306894), # Western curve
-            (22.731306, 120.307000)  # Back to tip
+            (22.731306, 120.307000), 
+            (22.731778, 120.307301), 
+            (22.732156, 120.307223), 
+            (22.732252, 120.307010), 
+            (22.731853, 120.306894), 
+            (22.731306, 120.307000)  
         ]
         map_center_dyn = dict(lat=22.7317, lon=120.3071)
         zoom_level_dyn = 17.2 
         true_path = get_interpolated_path(park_loop_points, steps_per_segment=13) 
 
-    # 歷史拖尾記憶體
     trail_lats, trail_lons = [], []
     true_trail_lats, true_trail_lons = [], []
-
-    # 動態引擎開始跑步
+    
+    progress_bar = st.progress(0)
+    
     for step, (cur_lat, cur_lon) in enumerate(true_path):
+        progress_bar.progress((step + 1) / len(true_path))
+        
         dyn_cn0 = sky_cn0
         current_env_status = "NORMAL LOS"
         status_color = "#39ff14"
@@ -265,13 +280,10 @@ else:
 
         effective_cn0 = max(10, dyn_cn0 - total_loss - nf_val)
         complete_loss = effective_cn0 < 22.0
-        l5_lost_lock = False
 
         if freq_mode == 'L1+L5': 
             if effective_cn0 >= 23.5: base_error, noise_factor = 0.000015, (50 - effective_cn0 + 1) / 30 
-            else:
-                l5_lost_lock = True 
-                base_error, noise_factor = (0.0001, 50) if complete_loss else (0.00003, (50 - effective_cn0 + 1) / 5)
+            else: base_error, noise_factor = (0.0001, 50) if complete_loss else (0.00003, (50 - effective_cn0 + 1) / 5)
         else: 
             base_error, noise_factor = (0.0001, 50) if complete_loss else (0.00003, (50 - effective_cn0 + 1) / 10)
 
@@ -286,7 +298,6 @@ else:
 
         dop_multiplier = 10.0 if actual_sat_count < 4 else max(0.5, 1.0 + (12 - actual_sat_count) * 0.1) * dev['mp_factor']
         std_dev = base_error * noise_factor * dop_multiplier
-        
         if turn_angle > 0.5: dev['mp_factor'] /= 1.3
         
         sim_lat = np.random.normal(cur_lat, std_dev)
@@ -299,26 +310,24 @@ else:
         avg_error_m = std_dev * 111320
         error_percent = 999.9 if (complete_loss or actual_sat_count < 4) else (avg_error_m / tolerance_m) * 100
 
-        with metrics_placeholder.container():
-            col1, col2 = st.columns([1, 2])
-            with col1:
-                st.markdown(f"<div style='background-color: #131a26; padding: 15px; border-radius: 10px; border: 1px solid {status_color}; box-shadow: 0 0 10px {status_color};'><div style='color: #94a3b8; font-size: 14px;'>Live Effective C/N0</div><div style='color: {status_color}; font-weight: bold; font-size: 1.5em;'>{effective_cn0:.1f} dB-Hz</div></div>", unsafe_allow_html=True)
-            with col2:
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Live Avg. Error", f"{avg_error_m:.1f} m")
-                m2.metric("Live EVM", "N/A" if error_percent == 999.9 else f"{error_percent:.1f}%", delta="Tracking" if not complete_loss else "Loss of Lock", delta_color="normal" if not complete_loss else "inverse")
-                m3.markdown(f"<div style='background-color: #131a26; padding: 15px; border-radius: 10px; border: 1px solid #1f2937;'><div style='color: #94a3b8; font-size: 14px;'>Environment Profile</div><div style='color: {status_color}; font-size: 18px; font-weight: bold;'>{current_env_status}</div></div>", unsafe_allow_html=True)
+        ui_cn0_box.markdown(f"<div style='background-color: #131a26; padding: 15px; border-radius: 10px; border: 1px solid {status_color}; box-shadow: 0 0 10px {status_color};'><div style='color: #94a3b8; font-size: 14px;'>Live Telemetry (Step {step+1}/{len(true_path)})</div><div style='color: {status_color}; font-weight: bold; font-size: 1.5em;'>{effective_cn0:.1f} dB-Hz</div><div style='color: #a78bfa; font-size: 0.9em; margin-top: 5px;'>⚙️ Final LNA NF: {nf_val:.2f} dB</div></div>", unsafe_allow_html=True)
+        ui_error_box.metric("Live Avg. Error", f"{avg_error_m:.1f} m")
+        ui_evm_box.metric("Live EVM", "N/A" if error_percent == 999.9 else f"{error_percent:.1f}%", delta="Tracking" if not complete_loss else "Loss of Lock", delta_color="normal" if not complete_loss else "inverse")
+        ui_status_box.markdown(f"<div style='background-color: #131a26; padding: 15px; border-radius: 10px; border: 1px solid #1f2937;'><div style='color: #94a3b8; font-size: 14px;'>Environment Profile</div><div style='color: {status_color}; font-size: 18px; font-weight: bold;'>{current_env_status}</div></div>", unsafe_allow_html=True)
 
-        circle_lats, circle_lons = generate_circle_polygon(cur_lat, cur_lon, tolerance_m)
-        fig_map_dyn = go.Figure()
-        
-        fig_map_dyn.add_trace(go.Scattermapbox(lat=true_trail_lats, lon=true_trail_lons, mode='lines', line=dict(color='#ff4081', width=3), name='True Path'))
-        fig_map_dyn.add_trace(go.Scattermapbox(lat=trail_lats, lon=trail_lons, mode='lines+markers', marker=dict(size=6, color=dev['color'], opacity=0.6), line=dict(color=dev['color'], width=2), name='Sim Track'))
-        fig_map_dyn.add_trace(go.Scattermapbox(lat=circle_lats, lon=circle_lons, mode='lines', fill='toself', fillcolor='rgba(192, 132, 252, 0.1)', line=dict(color='#c084fc', width=2), name=f'Tolerance ({tolerance_m}m)'))
-        fig_map_dyn.add_trace(go.Scattermapbox(lat=[cur_lat], lon=[cur_lon], mode='markers', marker=dict(size=18, color='#ff4081', symbol='star'), name='Current True'))
-        
-        mapbox_args_dyn = dict(style="white-bg", center=map_center_dyn, zoom=zoom_level_dyn, layers=[dict(sourcetype="raster", source=["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"], below="traces")])
-        fig_map_dyn.update_layout(mapbox=mapbox_args_dyn, margin={"r":0,"t":0,"l":0,"b":0}, height=500, uirevision="dynamic_view_locked", paper_bgcolor='#0e1117', showlegend=False)
-        
-        map_placeholder.plotly_chart(fig_map_dyn, use_container_width=True)
-        time.sleep(0.12)
+        time.sleep(0.05) 
+
+    progress_bar.empty()
+    
+    fig_map_dyn = go.Figure()
+    fig_map_dyn.add_trace(go.Scattermapbox(lat=true_trail_lats, lon=true_trail_lons, mode='lines', line=dict(color='#ff4081', width=3), name='True Path'))
+    fig_map_dyn.add_trace(go.Scattermapbox(lat=trail_lats, lon=trail_lons, mode='lines+markers', marker=dict(size=6, color=dev['color'], opacity=0.6), line=dict(color=dev['color'], width=2), name='Sim Track'))
+    
+    circle_lats, circle_lons = generate_circle_polygon(true_trail_lats[-1], true_trail_lons[-1], tolerance_m)
+    fig_map_dyn.add_trace(go.Scattermapbox(lat=circle_lats, lon=circle_lons, mode='lines', fill='toself', fillcolor='rgba(192, 132, 252, 0.1)', line=dict(color='#c084fc', width=2), name=f'Tolerance ({tolerance_m}m)'))
+    
+    mapbox_args_dyn = dict(style="white-bg", center=map_center_dyn, zoom=zoom_level_dyn, layers=[dict(sourcetype="raster", source=["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"], below="traces")]) if map_style == 'satellite' else dict(style=map_style, center=map_center_dyn, zoom=zoom_level_dyn)
+    
+    fig_map_dyn.update_layout(mapbox=mapbox_args_dyn, margin={"r":0,"t":0,"l":0,"b":0}, height=500, paper_bgcolor='#0e1117', showlegend=False)
+    
+    map_placeholder.plotly_chart(fig_map_dyn, use_container_width=True)
