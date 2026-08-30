@@ -1,0 +1,1186 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GNSS Performance Simulator</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.32.0/plotly.min.js"></script>
+<style>
+  :root{
+    --bg-main:#0e1117;
+    --bg-sidebar:#0b1220;
+    --bg-card:#131a26;
+    --border-color:#1f2937;
+    --text-primary:#e2e8f0;
+    --text-secondary:#94a3b8;
+    --accent-blue:#38bdf8;
+    --accent-purple:#a78bfa;
+    --accent-rose:#f43f5e;
+    --accent-cyan:#00e5ff;
+    --accent-green:#39ff14;
+    --accent-red:#ff003c;
+    --accent-yellow:#ffea00;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg-main);color:var(--text-primary);
+    font-family:"Source Sans Pro",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .app{display:flex;align-items:stretch;min-height:100vh;}
+
+  /* ---------- Sidebar ---------- */
+  .sidebar{width:360px;flex:0 0 360px;background:var(--bg-sidebar);border-right:1px solid var(--border-color);
+    padding:20px 18px 60px 18px;height:100vh;overflow-y:auto;position:sticky;top:0;}
+  .sidebar h2{font-size:19px;margin:22px 0 12px 0;letter-spacing:.5px;}
+  .sidebar h2:first-child{margin-top:0;}
+  .sidebar h3{font-size:16px;margin:15px 0 10px 0;}
+  .field{margin-bottom:16px;}
+  .field label{display:block;font-size:13px;color:var(--text-secondary);margin-bottom:6px;}
+  .radio-group{display:flex;flex-direction:column;gap:6px;}
+  .radio-group.inline{flex-direction:row;flex-wrap:wrap;gap:14px;}
+  .radio-option{display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer;}
+  .radio-option input{accent-color:var(--accent-blue);width:15px;height:15px;cursor:pointer;}
+  input[type="text"],input[type="number"],select{
+    width:100%;background:#0e1522;border:1px solid var(--border-color);color:var(--text-primary);
+    padding:8px 10px;border-radius:6px;font-size:14px;}
+  input[type="text"]:focus,input[type="number"]:focus,select:focus{outline:none;border-color:var(--accent-blue);}
+  .slider-row{display:flex;align-items:center;gap:10px;}
+  input[type="range"]{flex:1;accent-color:var(--accent-blue);cursor:pointer;}
+  .slider-val{min-width:34px;text-align:right;font-variant-numeric:tabular-nums;color:var(--accent-blue);font-weight:600;font-size:13px;}
+  .checkbox-grid{display:flex;flex-wrap:wrap;gap:10px;}
+  .chk-option{display:flex;align-items:center;gap:6px;font-size:13px;background:#0e1522;
+    border:1px solid var(--border-color);border-radius:6px;padding:6px 10px;cursor:pointer;}
+  .chk-option input{accent-color:var(--accent-blue);cursor:pointer;}
+  .run-btn{width:100%;padding:12px;border-radius:8px;border:none;background:#ff4b4b;color:#fff;
+    font-size:15px;font-weight:700;letter-spacing:.5px;cursor:pointer;margin-top:6px;transition:background .15s;}
+  .run-btn:hover:not(:disabled){filter:brightness(1.12);}
+  .run-btn:disabled{background:#3a3f4b !important;color:#7d8493;cursor:not-allowed;filter:none;}
+  fieldset:disabled .field, .sidebar.disabled{opacity:.55;pointer-events:none;}
+
+  /* ---------- Main ---------- */
+  .main{flex:1;min-width:0;padding:26px 34px 60px 34px;}
+  .title{color:var(--accent-blue);letter-spacing:2px;font-size:2.1em;margin:0 0 14px 0;font-weight:700;}
+  hr{border:none;border-top:1px solid var(--border-color);margin:18px 0;}
+
+  .metrics-row{display:flex;gap:20px;align-items:stretch;flex-wrap:wrap;}
+  .cn0-col{flex:1 1 260px;}
+  .metrics-col{flex:2 1 480px;display:flex;gap:18px;flex-wrap:wrap;}
+  .metrics-col > div{flex:1 1 140px;}
+
+  .info-card{background:var(--bg-card);padding:15px;border-radius:10px;border:1px solid var(--border-color);height:100%;}
+  .cn0-value{color:var(--accent-cyan);font-weight:bold;font-size:1.2em;}
+  .nf-value{color:var(--accent-purple);font-size:.9em;margin-top:5px;}
+  .status-card .label{color:var(--text-secondary);font-size:14px;}
+  .status-card .value{font-size:20px;font-weight:bold;margin-top:2px;}
+  .status-card.live{box-shadow:0 0 10px var(--glow, transparent);border-color:var(--glow, var(--border-color));}
+
+  .metric-box{background:var(--bg-card);border:1px solid var(--border-color);border-radius:10px;padding:14px 16px;}
+  .metric-box .m-label{color:var(--text-secondary);font-size:13px;}
+  .metric-box .m-value{font-size:1.7em;font-weight:600;margin-top:2px;}
+  .metric-box .m-delta{font-size:12.5px;font-weight:600;margin-top:4px;display:inline-block;padding:1px 8px;border-radius:10px;}
+  .m-delta.pass{color:#059669;background:rgba(5,150,105,.15);}
+  .m-delta.fail{color:#ef4444;background:rgba(239,68,68,.15);}
+
+  .charts-row{display:flex;gap:18px;flex-wrap:wrap;}
+  .charts-row > div{flex:1 1 420px;min-width:0;background:var(--bg-main);}
+  .chart-box{height:380px;}
+
+  .map-wrap{position:relative;margin-top:6px;}
+  #mapDiv{height:500px;width:100%;border-radius:6px;background:#0e1117;}
+  .progress-wrap{display:none;margin:10px 0;background:#1f2937;border-radius:6px;overflow:hidden;height:8px;}
+  .progress-wrap.show{display:block;}
+  .progress-bar{height:100%;width:0%;background:linear-gradient(90deg,var(--accent-blue),var(--accent-cyan));transition:width .05s linear;}
+
+  /* ---------- Tabs ---------- */
+  .tab-nav{display:flex;gap:8px;margin:0 0 0 0;}
+  .tab-btn{background:#131a26;border:1px solid var(--border-color);border-bottom:none;color:var(--text-secondary);
+    padding:10px 20px;border-radius:8px 8px 0 0;cursor:pointer;font-size:14px;font-weight:600;letter-spacing:.3px;}
+  .tab-btn.active{color:var(--accent-blue);background:#0e1522;box-shadow:inset 0 2px 0 var(--accent-blue);}
+  .tab-btn:disabled{opacity:.45;cursor:not-allowed;}
+  .tab-panel{display:none;}
+  .tab-panel.active{display:block;}
+  .sidebar-section{display:block;}
+
+  ::-webkit-scrollbar{width:9px;}
+  ::-webkit-scrollbar-thumb{background:#2a3242;border-radius:5px;}
+  ::-webkit-scrollbar-track{background:transparent;}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ======================= SIDEBAR ======================= -->
+  <div class="sidebar" id="sidebar">
+
+    <h2 style="color:#38bdf8;">1. LINK BUDGET</h2>
+
+    <div class="field">
+      <label>1a. Device Type (Polarization):</label>
+      <div class="radio-group">
+        <label class="radio-option"><input type="radio" name="deviceType" value="Navigator" checked>Pro Navigator (RHCP Ant)</label>
+        <label class="radio-option"><input type="radio" name="deviceType" value="Wearable">Smartwatch (LP Ant)</label>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>1b. Sky Signal Strength (C/N0):</label>
+      <div class="slider-row">
+        <input type="range" id="skyCn0Slider" min="20" max="50" step="1" value="42">
+        <span class="slider-val" id="skyCn0Val">42</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>1c. Antenna Efficiency (%) - Gain Impact:</label>
+      <input type="text" id="antEffInput" value="85.0">
+    </div>
+
+    <h3 style="color:#a78bfa;">1d. RF Front-End (Friis Formula)</h3>
+    <div class="field">
+      <label>Pre-Filter Loss (dB):</label>
+      <input type="number" id="preFilterLoss" value="1.0" step="0.1">
+    </div>
+    <div class="field">
+      <label>LNA Gain (dB):</label>
+      <input type="number" id="lnaGain" value="18.0" step="0.5">
+    </div>
+    <div class="field">
+      <label>LNA NF (dB):</label>
+      <input type="number" id="lnaNf" value="1.2" step="0.1">
+    </div>
+    <div class="field">
+      <label>Post-LNA/RFIC NF (dB):</label>
+      <input type="number" id="postLnaNf" value="4.0" step="0.1">
+    </div>
+
+    <h2 style="color:#38bdf8;">2. ENVIRONMENT</h2>
+
+    <div class="field">
+      <label>True Coordinates (Lat, Lon):</label>
+      <input type="text" id="coordInput" value="25.033964, 121.564468">
+    </div>
+
+    <div class="field">
+      <label>Tolerance Radius (m):</label>
+      <input type="text" id="toleranceInput" value="5.0">
+    </div>
+
+    <div class="field">
+      <label>Map Display Style:</label>
+      <div class="radio-group">
+        <label class="radio-option"><input type="radio" name="mapStyle" value="satellite" checked>🛰️ Satellite (Tech)</label>
+        <label class="radio-option"><input type="radio" name="mapStyle" value="carto-darkmatter">🌃 Dark (Cyber)</label>
+        <label class="radio-option"><input type="radio" name="mapStyle" value="open-street-map">🗺️ Light Street</label>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Enabled Constellations:</label>
+      <div class="checkbox-grid">
+        <label class="chk-option"><input type="checkbox" class="constellation-check" value="GPS" checked>GPS</label>
+        <label class="chk-option"><input type="checkbox" class="constellation-check" value="Galileo">Galileo</label>
+        <label class="chk-option"><input type="checkbox" class="constellation-check" value="GLONASS">GLONASS</label>
+        <label class="chk-option"><input type="checkbox" class="constellation-check" value="BeiDou">BeiDou</label>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Frequency Band:</label>
+      <div class="radio-group">
+        <label class="radio-option"><input type="radio" name="freqMode" value="L1" checked>Single-Band (L1)</label>
+        <label class="radio-option"><input type="radio" name="freqMode" value="L1+L5">Dual-Band (L1+L5)</label>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Max Satellite Channels:</label>
+      <div class="slider-row">
+        <input type="range" id="maxSatsSlider" min="4" max="36" step="4" value="12">
+        <span class="slider-val" id="maxSatsVal">12</span>
+      </div>
+    </div>
+
+    <div id="sidebarSection3" class="sidebar-section">
+      <h2 style="color:#f43f5e;">3. DYNAMIC KINEMATIC ENGINE</h2>
+
+      <div class="field">
+        <label>Select Stress Test Scenario:</label>
+        <select id="scenarioSelect">
+          <option value="🔴 Urban Canyon (Taipei 101 Perimeter)">🔴 Urban Canyon (Taipei 101 Perimeter)</option>
+          <option value="🟢 Open Sky (Kaohsiung Park Loop)">🟢 Open Sky (Kaohsiung Park Loop)</option>
+        </select>
+      </div>
+
+      <button class="run-btn" id="runSimBtn">▶️ RUN DYNAMIC TEST</button>
+    </div>
+
+    <div id="sidebarSection4" class="sidebar-section" style="display:none;">
+      <h2 style="color:#2dd4bf;">4. 1PPS DISCIPLINE ENGINE</h2>
+      <div style="font-size:12px;color:var(--text-secondary);margin:-6px 0 14px 0;line-height:1.5;">
+        沿用上方 1. LINK BUDGET / 2. ENVIRONMENT 的 C/N0 與可見衛星數,做為 GNSS 授時雜訊來源。
+      </div>
+
+      <div class="field">
+        <label>Local Oscillator (被校正的本地時鐘):</label>
+        <div class="radio-group">
+          <label class="radio-option"><input type="radio" name="oscType" value="TCXO" checked>Consumer TCXO (低成本)</label>
+          <label class="radio-option"><input type="radio" name="oscType" value="OCXO">Precision OCXO (高穩定度)</label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Initial Phase Offset (µs):</label>
+        <input type="number" id="ppsInitPhase" value="1.5" step="0.1">
+      </div>
+
+      <div class="field">
+        <label>Initial Frequency Offset (ppb):</label>
+        <input type="number" id="ppsInitFreq" value="800" step="50">
+      </div>
+
+      <div class="field">
+        <label>Loop Time Constant τ (s):</label>
+        <div class="slider-row">
+          <input type="range" id="ppsTauSlider" min="3" max="15" step="1" value="8">
+          <span class="slider-val" id="ppsTauVal">8</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Run Duration (s):</label>
+        <div class="slider-row">
+          <input type="range" id="ppsDurationSlider" min="60" max="200" step="10" value="150">
+          <span class="slider-val" id="ppsDurationVal">150</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="chk-option" style="width:100%;">
+          <input type="checkbox" id="ppsOutageEnable" checked>Simulate GNSS Outage (Holdover Test)
+        </label>
+      </div>
+      <div class="field" id="ppsOutageParams">
+        <label>Outage Start (s) / Duration (s):</label>
+        <div style="display:flex;gap:10px;">
+          <input type="number" id="ppsOutageStart" value="90" step="5" style="flex:1;">
+          <input type="number" id="ppsOutageDuration" value="25" step="5" style="flex:1;">
+        </div>
+      </div>
+
+      <button class="run-btn" id="runPpsBtn" style="background:#2dd4bf;">▶️ RUN DISCIPLINE TEST</button>
+    </div>
+  </div>
+
+  <!-- ======================= MAIN ======================= -->
+  <div class="main">
+    <h1 class="title">GNSS PERFORMANCE SIMULATOR</h1>
+
+    <div class="tab-nav">
+      <button class="tab-btn active" id="tabBtn1" data-tab="1">📡 Position Performance</button>
+      <button class="tab-btn" id="tabBtn2" data-tab="2">⏱ 1PPS Discipline</button>
+    </div>
+    <hr style="margin-top:0;">
+
+    <!-- ============ TAB 1: Position Performance (original app) ============ -->
+    <div id="tab1Panel" class="tab-panel active">
+      <div class="metrics-row">
+        <div class="cn0-col"><div id="cn0Box"></div></div>
+        <div class="metrics-col">
+          <div id="errorBox"></div>
+          <div id="evmBox"></div>
+          <div id="statusBox"></div>
+        </div>
+      </div>
+
+      <hr>
+
+      <div class="charts-row">
+        <div><div id="skyplotDiv" class="chart-box"></div></div>
+        <div><div id="waveformDiv" class="chart-box"></div></div>
+      </div>
+
+      <div class="map-wrap">
+        <div class="progress-wrap" id="progressWrap"><div class="progress-bar" id="progressBar"></div></div>
+        <div id="mapDiv"></div>
+      </div>
+    </div>
+
+    <!-- ============ TAB 2: GNSS-Disciplined 1PPS ============ -->
+    <div id="tab2Panel" class="tab-panel">
+      <div class="metrics-row">
+        <div class="cn0-col"><div id="ppsLockBox"></div></div>
+        <div class="metrics-col">
+          <div id="ppsPhaseBox"></div>
+          <div id="ppsFreqBox"></div>
+          <div id="ppsRefBox"></div>
+        </div>
+      </div>
+
+      <hr>
+
+      <div class="charts-row">
+        <div><div id="ppsScopeDiv" class="chart-box"></div></div>
+        <div><div id="ppsConvergeDiv" class="chart-box"></div></div>
+      </div>
+
+      <div class="progress-wrap" id="ppsProgressWrap"><div class="progress-bar" id="ppsProgressBar"></div></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* =========================================================================
+   GNSS Performance Simulator — HTML/CSS/JS port of GNSS.py (Streamlit app)
+   All constants, formulas and branching logic mirror the original 1:1.
+   ========================================================================= */
+
+// ---------- 公用常數與資料 (unchanged from GNSS.py) ----------
+const SATELLITE_ALMANAC = [
+  {prn:"G01",az:45,el:60,sys:"GPS"},{prn:"G04",az:135,el:30,sys:"GPS"},
+  {prn:"G07",az:225,el:75,sys:"GPS"},{prn:"G10",az:315,el:40,sys:"GPS"},
+  {prn:"G13",az:10,el:85,sys:"GPS"},{prn:"G16",az:100,el:20,sys:"GPS"},
+  {prn:"G19",az:190,el:50,sys:"GPS"},{prn:"G22",az:280,el:15,sys:"GPS"},
+  {prn:"G25",az:80,el:70,sys:"GPS"},{prn:"G28",az:170,el:25,sys:"GPS"},
+  {prn:"G31",az:260,el:65,sys:"GPS"},{prn:"G02",az:350,el:35,sys:"GPS"},
+  {prn:"E03",az:60,el:45,sys:"Galileo"},{prn:"E05",az:150,el:55,sys:"Galileo"},
+  {prn:"E09",az:240,el:25,sys:"Galileo"},{prn:"E12",az:330,el:80,sys:"Galileo"},
+  {prn:"E24",az:25,el:35,sys:"Galileo"},{prn:"E30",az:115,el:65,sys:"Galileo"},
+  {prn:"E33",az:205,el:10,sys:"Galileo"},{prn:"E36",az:295,el:50,sys:"Galileo"},
+  {prn:"R02",az:30,el:70,sys:"GLONASS"},{prn:"R05",az:120,el:40,sys:"GLONASS"},
+  {prn:"R08",az:210,el:85,sys:"GLONASS"},{prn:"R15",az:300,el:20,sys:"GLONASS"},
+  {prn:"R18",az:75,el:15,sys:"GLONASS"},{prn:"R21",az:165,el:60,sys:"GLONASS"},
+  {prn:"R24",az:255,el:30,sys:"GLONASS"},{prn:"R01",az:345,el:55,sys:"GLONASS"},
+  {prn:"C01",az:90,el:80,sys:"BeiDou"},{prn:"C06",az:180,el:35,sys:"BeiDou"},
+  {prn:"C10",az:270,el:60,sys:"BeiDou"},{prn:"C13",az:0,el:25,sys:"BeiDou"},
+  {prn:"C16",az:50,el:50,sys:"BeiDou"},{prn:"C21",az:140,el:10,sys:"BeiDou"},
+  {prn:"C29",az:230,el:45,sys:"BeiDou"},{prn:"C33",az:320,el:75,sys:"BeiDou"},
+];
+
+const SYS_COLORS = {GPS:"#00e5ff", Galileo:"#39ff14", GLONASS:"#ff003c", BeiDou:"#ffea00"};
+const DEVICE_CONFIGS = {
+  Navigator: {name:"Pro Navigator (RHCP Ant)", mismatch_loss:0.0, body_loss:0.0, mp_factor:1.0, color:"#00e5ff"},
+  Wearable:  {name:"Smartwatch (LP Ant)",      mismatch_loss:3.0, body_loss:4.0, mp_factor:2.5, color:"#ff003c"}
+};
+const BORDER_COLOR = "#1f2937";
+
+// Local oscillator profiles for the 1PPS discipline tab. Values are illustrative
+// (not datasheet figures) but the relative TCXO-vs-OCXO ordering — an order of
+// magnitude worse aging/holdover drift and phase-noise floor for the cheap part —
+// matches real-world GNSSDO behaviour.
+const OSC_CONFIGS = {
+  TCXO: {name:"Consumer TCXO", agingSigmaPpb:0.8, holdoverExtraSigmaPpb:3.0, phaseNoiseFloorNs:8, color:"#facc15"},
+  OCXO: {name:"Precision OCXO", agingSigmaPpb:0.05, holdoverExtraSigmaPpb:0.15, phaseNoiseFloorNs:2, color:"#34d399"}
+};
+const PPS_LOCK_THRESHOLD_NS = 100;   // +/- window that counts as "in lock"
+const PPS_LOCK_HOLD_SECONDS = 10;    // must stay inside the window this long to call it TRACKING
+const PPS_MIN_SATS = 4;              // reuses the same minimum-fix rule as the position tab
+const PPS_LOSS_CN0_THRESHOLD = 22.0; // reuses the same loss-of-lock C/N0 threshold as the position tab
+
+let PRN_L1, TIME_L1, PRN_L5, TIME_L5;
+
+// Cached link-budget outputs from the last Tab 1 recompute; Tab 2 reads these
+// rather than recomputing them, so both tabs always agree on signal quality.
+let lastLinkBudget = {effectiveCn0Static: 30, actualSatCount: 12};
+
+// ---------- 輔助函數 (ports of the Python helper functions) ----------
+function parseCoordinateString(coordStr){
+  if(!coordStr) return [25.033964, 121.564468];
+  const dmsPattern = /(\d+)[°\s]+(\d+)['\s]+([\d.]+)[^NSns]*([NSns])[,\s]*(\d+)[°\s]+(\d+)['\s]+([\d.]+)[^EWew]*([EWew])/;
+  const m = coordStr.match(dmsPattern);
+  if(m){
+    let latD=parseFloat(m[1]), latM=parseFloat(m[2]), latS=parseFloat(m[3]), latDir=m[4].toUpperCase();
+    let lonD=parseFloat(m[5]), lonM=parseFloat(m[6]), lonS=parseFloat(m[7]), lonDir=m[8].toUpperCase();
+    let lat = latD + (latM/60.0) + (latS/3600.0);
+    let lon = lonD + (lonM/60.0) + (lonS/3600.0);
+    if(latDir==="S") lat=-lat;
+    if(lonDir==="W") lon=-lon;
+    return [lat, lon];
+  }
+  const decPattern = /(-?[\d.]+)[,\s]+(-?[\d.]+)/;
+  const m2 = coordStr.match(decPattern);
+  if(m2) return [parseFloat(m2[1]), parseFloat(m2[2])];
+  return [25.033964, 121.564468];
+}
+
+function generateCirclePolygon(lat, lon, radiusM, numPoints=36){
+  const pointsLat=[], pointsLon=[];
+  for(let i=0;i<=numPoints;i++){
+    const angle = (i/numPoints*360.0) * Math.PI/180.0;
+    const dx = radiusM*Math.cos(angle), dy = radiusM*Math.sin(angle);
+    pointsLat.push(lat + (dy/6371000.0)*(180.0/Math.PI));
+    pointsLon.push(lon + (dx/6371000.0)*(180.0/Math.PI)/Math.cos(lat*Math.PI/180.0));
+  }
+  return [pointsLat, pointsLon];
+}
+
+function getInterpolatedPath(points, stepsPerSegment=15){
+  const path=[];
+  if(!points || points.length===0) return path;
+  for(let i=0;i<points.length-1;i++){
+    const [latStart, lonStart]=points[i];
+    const [latEnd, lonEnd]=points[i+1];
+    for(let j=0;j<stepsPerSegment;j++){
+      path.push([
+        latStart + (latEnd-latStart)*j/stepsPerSegment,
+        lonStart + (lonEnd-lonStart)*j/stepsPerSegment
+      ]);
+    }
+  }
+  path.push(points[points.length-1]);
+  return path;
+}
+
+// numpy-equivalents
+function gaussianRandom(mean=0, std=1){
+  let u=0, v=0;
+  while(u===0) u=Math.random();
+  while(v===0) v=Math.random();
+  const z = Math.sqrt(-2.0*Math.log(u))*Math.cos(2.0*Math.PI*v);
+  return mean + z*std;
+}
+function gaussianArray(mean, std, n){
+  const arr=new Array(n);
+  for(let i=0;i<n;i++) arr[i]=gaussianRandom(mean,std);
+  return arr;
+}
+function choicePM1(n){
+  const arr=new Array(n);
+  for(let i=0;i<n;i++) arr[i]= Math.random()<0.5 ? 1 : -1;
+  return arr;
+}
+function linspace(start, stop, num, endpoint=true){
+  const arr=new Array(num);
+  const step = endpoint ? (num>1 ? (stop-start)/(num-1) : 0) : (stop-start)/num;
+  for(let i=0;i<num;i++) arr[i]=start+step*i;
+  return arr;
+}
+function arangeArr(n){ const a=new Array(n); for(let i=0;i<n;i++) a[i]=i; return a; }
+function uniformRandom(low, high){ return low + Math.random()*(high-low); }
+function sleep(ms){ return new Promise(res=>setTimeout(res, ms)); }
+
+function regeneratePRNArrays(){
+  // Mirrors the module-level numpy arrays in GNSS.py, which are re-created
+  // on every Streamlit rerun (i.e. on every control interaction).
+  PRN_L1 = choicePM1(50);
+  TIME_L1 = arangeArr(50);
+  PRN_L5 = choicePM1(500);
+  TIME_L5 = linspace(0, 50, 500, false);
+}
+
+// ---------- Friis cascaded noise figure ----------
+function computeFriisNF(preFilterLoss, lnaGain, lnaNf, postLnaNf){
+  const fPre = Math.pow(10, preFilterLoss/10);
+  const gPre = Math.pow(10, -preFilterLoss/10);
+  const fLna = Math.pow(10, lnaNf/10);
+  const gLna = Math.pow(10, lnaGain/10);
+  const fPost = Math.pow(10, postLnaNf/10);
+  const fTotal = fPre + (fLna-1)/gPre + (fPost-1)/(gPre*gLna);
+  return 10*Math.log10(fTotal);
+}
+
+// ---------- Reading current control state ----------
+function getControls(){
+  const deviceType = document.querySelector('input[name="deviceType"]:checked').value;
+  const skyCn0 = parseInt(document.getElementById('skyCn0Slider').value, 10);
+  const antEffStr = document.getElementById('antEffInput').value;
+  let antEffPercent = parseFloat(antEffStr);
+  if(isNaN(antEffPercent)) antEffPercent = 85.0;
+  antEffPercent = Math.max(0.1, Math.min(100.0, antEffPercent));
+
+  const preFilterLoss = parseFloat(document.getElementById('preFilterLoss').value);
+  const lnaGain = parseFloat(document.getElementById('lnaGain').value);
+  const lnaNf = parseFloat(document.getElementById('lnaNf').value);
+  const postLnaNf = parseFloat(document.getElementById('postLnaNf').value);
+
+  const coordStr = document.getElementById('coordInput').value;
+  const [inputLat, inputLon] = parseCoordinateString(coordStr);
+
+  const toleranceStr = document.getElementById('toleranceInput').value;
+  let toleranceM = parseFloat(toleranceStr);
+  if(isNaN(toleranceM)) toleranceM = 5.0;
+
+  const mapStyle = document.querySelector('input[name="mapStyle"]:checked').value;
+  const selectedSys = Array.from(document.querySelectorAll('.constellation-check:checked')).map(cb=>cb.value);
+  const freqMode = document.querySelector('input[name="freqMode"]:checked').value;
+  const maxSats = parseInt(document.getElementById('maxSatsSlider').value, 10);
+  const scenario = document.getElementById('scenarioSelect').value;
+
+  return {deviceType, skyCn0, antEffPercent, preFilterLoss, lnaGain, lnaNf, postLnaNf,
+          coordStr, inputLat, inputLon, toleranceM, mapStyle, selectedSys, freqMode, maxSats, scenario};
+}
+
+// ---------- Chart layout base (shared, matches chart_layout_base) ----------
+function chartLayoutBase(){
+  return {paper_bgcolor:'#0e1117', plot_bgcolor:'#0e1117', font:{color:'#94a3b8'},
+          margin:{r:20,t:40,l:20,b:30}};
+}
+
+// ---------- Skyplot ----------
+function renderSkyplot(controls){
+  const poolSats = SATELLITE_ALMANAC.filter(s => controls.selectedSys.includes(s.sys));
+  const visibleSats = poolSats.slice(0, controls.maxSats);
+  const traces = [];
+  ['GPS','Galileo','GLONASS','BeiDou'].forEach(sysName=>{
+    const sysSats = visibleSats.filter(s=>s.sys===sysName);
+    if(sysSats.length){
+      traces.push({
+        type:'scatterpolar',
+        r: sysSats.map(s=>90-s.el),
+        theta: sysSats.map(s=>s.az),
+        mode:'markers+text',
+        marker:{size:12, color:SYS_COLORS[sysName], line:{color:'#fff', width:1}},
+        text: sysSats.map(s=>s.prn),
+        textposition:'top center',
+        name: sysName
+      });
+    }
+  });
+  const layout = Object.assign(chartLayoutBase(), {
+    title:{text:'Constellation Skyplot', font:{color:'#e2e8f0', size:16}},
+    showlegend:true,
+    legend:{orientation:'h', yanchor:'bottom', y:-0.15, xanchor:'center', x:0.5},
+    polar:{bgcolor:'#0e1117',
+      angularaxis:{rotation:90, direction:'clockwise', gridcolor:'#334155', linecolor:'#334155'},
+      radialaxis:{range:[0,90], gridcolor:'#334155', showline:false}}
+  });
+  Plotly.react('skyplotDiv', traces, layout, {responsive:true, displayModeBar:false});
+  return visibleSats.length;
+}
+
+// ---------- Baseband waveform ----------
+function renderWaveform(controls, effectiveCn0Static){
+  const waveformNoiseStd = (50 - effectiveCn0Static) * 0.08;
+  const receivedL1 = PRN_L1.map(v => v + gaussianRandom(0, waveformNoiseStd));
+  const receivedL5 = PRN_L5.map(v => v + gaussianRandom(0, waveformNoiseStd));
+  const l5IsActive = (controls.freqMode === 'L1+L5') && (effectiveCn0Static >= 23.5);
+  const l5Opacity = l5IsActive ? 0.8 : 0.2;
+  const l5Color = l5IsActive ? '#ff003c' : '#475569';
+
+  const traces = [
+    {type:'scatter', x:TIME_L1, y:receivedL1.map(v=>v+2), mode:'lines+markers',
+      line:{color:'#475569', width:1}, marker:{size:3, color:'#475569'}, name:'L1 Rx'},
+    {type:'scatter', x:TIME_L1, y:PRN_L1.map(v=>v+2), mode:'lines',
+      line:{color:'#00e5ff', width:2, shape:'hv'}, name:'L1 Ideal'},
+    {type:'scatter', x:TIME_L5, y:receivedL5.map(v=>v-2), mode:'lines',
+      line:{color:'#475569', width:1}, opacity:l5Opacity, name:'L5 Rx'},
+    {type:'scatter', x:TIME_L5, y:PRN_L5.map(v=>v-2), mode:'lines',
+      line:{color:l5Color, width:2, shape:'hv'}, opacity:l5Opacity, name:'L5 Ideal'}
+  ];
+  const layout = Object.assign(chartLayoutBase(), {
+    title:{text:'Baseband Waveform', font:{color:'#e2e8f0', size:16}},
+    yaxis:{range:[-4.5,4.5], tickvals:[-2,2], ticktext:['L5 Band','L1 Band'],
+      gridcolor:'#334155', zeroline:true, zerolinecolor:'#475569'},
+    legend:{orientation:'h', yanchor:'bottom', y:1.02, xanchor:'right', x:1}
+  });
+  Plotly.react('waveformDiv', traces, layout, {responsive:true, displayModeBar:false});
+}
+
+// ---------- Metric / info card rendering ----------
+function setCn0BoxStatic(effectiveCn0, nfVal){
+  document.getElementById('cn0Box').innerHTML =
+    `<div class="info-card"><div class="cn0-value">Static Effective C/N0: ${effectiveCn0.toFixed(1)} dB-Hz</div>`+
+    `<div class="nf-value">⚙️ Final LNA NF (Friis): ${nfVal.toFixed(2)} dB</div></div>`;
+}
+function setCn0BoxLive(step, totalSteps, effectiveCn0, statusColor, nfVal){
+  document.getElementById('cn0Box').innerHTML =
+    `<div class="info-card" style="border:1px solid ${statusColor};box-shadow:0 0 10px ${statusColor};">`+
+    `<div style="color:#94a3b8;font-size:14px;">Live Telemetry (Step ${step}/${totalSteps})</div>`+
+    `<div style="color:${statusColor};font-weight:bold;font-size:1.5em;">${effectiveCn0.toFixed(1)} dB-Hz</div>`+
+    `<div class="nf-value">⚙️ Final LNA NF: ${nfVal.toFixed(2)} dB</div></div>`;
+}
+function setErrorBox(label, avgErrorM){
+  document.getElementById('errorBox').innerHTML =
+    `<div class="metric-box"><div class="m-label">${label}</div><div class="m-value">${avgErrorM.toFixed(1)} m</div></div>`;
+}
+function setEvmBox(label, errorPercent, deltaText, pass){
+  const valueStr = (errorPercent===999.9) ? 'N/A' : `${errorPercent.toFixed(1)}%`;
+  document.getElementById('evmBox').innerHTML =
+    `<div class="metric-box"><div class="m-label">${label}</div><div class="m-value">${valueStr}</div>`+
+    `<div class="m-delta ${pass?'pass':'fail'}">${deltaText}</div></div>`;
+}
+function setStatusBoxStatic(statusStr, statusColor){
+  document.getElementById('statusBox').innerHTML =
+    `<div class="info-card"><div class="label">Receiver Status</div>`+
+    `<div class="value" style="color:${statusColor};">${statusStr}</div></div>`;
+}
+function setStatusBoxLive(currentEnvStatus, statusColor){
+  document.getElementById('statusBox').innerHTML =
+    `<div class="info-card"><div class="label">Environment Profile</div>`+
+    `<div class="value" style="color:${statusColor};">${currentEnvStatus}</div></div>`;
+}
+
+// ---------- Leaflet map ----------
+let leafletMap, currentTileLayer, overlayLayers = [];
+
+function initMap(){
+  leafletMap = L.map('mapDiv', {zoomSnap:0.1, zoomDelta:0.5, attributionControl:false});
+  leafletMap.setView([25.033964, 121.564468], 17);
+  updateTileLayer('satellite');
+}
+
+function updateTileLayer(style){
+  if(currentTileLayer) leafletMap.removeLayer(currentTileLayer);
+  let url, opts = {maxZoom:20, maxNativeZoom:19};
+  if(style === 'satellite'){
+    url = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+  } else if(style === 'carto-darkmatter'){
+    url = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+    opts.subdomains = 'abcd';
+  } else {
+    url = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+  }
+  currentTileLayer = L.tileLayer(url, opts).addTo(leafletMap);
+}
+
+function clearOverlays(){
+  overlayLayers.forEach(l => leafletMap.removeLayer(l));
+  overlayLayers = [];
+}
+
+const STAR_ICON = L.divIcon({
+  html:'<div style="color:#ff4081;font-size:22px;line-height:22px;text-shadow:0 0 5px #000,0 0 2px #000;">★</div>',
+  className:'', iconSize:[22,22], iconAnchor:[11,11]
+});
+
+function renderStaticMap(controls, simLats, simLons){
+  clearOverlays();
+  updateTileLayer(controls.mapStyle);
+
+  const [circleLats, circleLons] = generateCirclePolygon(controls.inputLat, controls.inputLon, controls.toleranceM);
+  const circleLatLngs = circleLats.map((la,i)=>[la, circleLons[i]]);
+  overlayLayers.push(L.polygon(circleLatLngs, {color:'#c084fc', weight:2, fillColor:'#c084fc', fillOpacity:0.1}).addTo(leafletMap));
+
+  const dev = DEVICE_CONFIGS[controls.deviceType];
+  simLats.forEach((la,i)=>{
+    overlayLayers.push(L.circleMarker([la, simLons[i]],
+      {radius:5, color:dev.color, fillColor:dev.color, fillOpacity:0.6, weight:0}).addTo(leafletMap));
+  });
+
+  overlayLayers.push(L.marker([controls.inputLat, controls.inputLon], {icon:STAR_ICON}).addTo(leafletMap));
+
+  leafletMap.setView([controls.inputLat, controls.inputLon], 17);
+}
+
+function renderDynamicMap(controls, trueLats, trueLons, simLats, simLons, center, zoom){
+  clearOverlays();
+  updateTileLayer(controls.mapStyle);
+
+  overlayLayers.push(L.polyline(trueLats.map((la,i)=>[la, trueLons[i]]),
+    {color:'#ff4081', weight:3}).addTo(leafletMap));
+
+  const dev = DEVICE_CONFIGS[controls.deviceType];
+  overlayLayers.push(L.polyline(simLats.map((la,i)=>[la, simLons[i]]),
+    {color:dev.color, weight:2}).addTo(leafletMap));
+  simLats.forEach((la,i)=>{
+    overlayLayers.push(L.circleMarker([la, simLons[i]],
+      {radius:4, color:dev.color, fillColor:dev.color, fillOpacity:0.6, weight:0}).addTo(leafletMap));
+  });
+
+  const lastLat = trueLats[trueLats.length-1], lastLon = trueLons[trueLons.length-1];
+  const [circleLats, circleLons] = generateCirclePolygon(lastLat, lastLon, controls.toleranceM);
+  overlayLayers.push(L.polygon(circleLats.map((la,i)=>[la, circleLons[i]]),
+    {color:'#c084fc', weight:2, fillColor:'#c084fc', fillOpacity:0.1}).addTo(leafletMap));
+
+  leafletMap.setView(center, zoom);
+}
+
+// ---------- Static ("if not run_sim") branch ----------
+function renderStaticResults(controls, effectiveCn0Static, nfVal, totalLoss, actualSatCount){
+  const dev = DEVICE_CONFIGS[controls.deviceType];
+  const effectiveCn0 = effectiveCn0Static;
+  const completeLoss = effectiveCn0 < 22.0;
+
+  let baseError, noiseFactor;
+  if(controls.freqMode === 'L1+L5'){
+    if(effectiveCn0 >= 23.5){
+      baseError = 0.000015; noiseFactor = (50 - effectiveCn0 + 1) / 30;
+    } else {
+      if(completeLoss){ baseError = 0.0001; noiseFactor = 100; }
+      else { baseError = 0.00003; noiseFactor = (50 - effectiveCn0 + 1) / 5; }
+    }
+  } else {
+    if(completeLoss){ baseError = 0.0001; noiseFactor = 100; }
+    else { baseError = 0.00003; noiseFactor = (50 - effectiveCn0 + 1) / 10; }
+  }
+
+  const dopMultiplier = actualSatCount < 4
+    ? 10.0
+    : Math.max(0.5, 1.0 + (12 - actualSatCount)*0.1) * dev.mp_factor;
+  const stdDev = baseError * noiseFactor * dopMultiplier;
+
+  const simulatedLats = gaussianArray(controls.inputLat, stdDev, 100);
+  const simulatedLons = gaussianArray(controls.inputLon, stdDev, 100);
+  const avgErrorM = stdDev * 111320;
+  const errorPercent = (completeLoss || actualSatCount < 4) ? 999.9 : (avgErrorM / controls.toleranceM) * 100;
+
+  const statusStr = completeLoss ? 'LOSS OF LOCK' : 'TRACKING';
+  const statusColor = completeLoss ? '#ff003c' : '#39ff14';
+
+  setCn0BoxStatic(effectiveCn0, nfVal);
+  setErrorBox('Avg. Error Distance', avgErrorM);
+  setEvmBox('Positioning EVM', errorPercent, errorPercent<=100 ? 'Pass' : 'Fail', errorPercent<=100);
+  setStatusBoxStatic(statusStr, statusColor);
+
+  renderStaticMap(controls, simulatedLats, simulatedLons);
+}
+
+// ---------- Full recompute (mirrors a Streamlit "rerun") ----------
+function recomputeAndRenderStatic(){
+  const controls = getControls();
+  regeneratePRNArrays();
+
+  const nfVal = computeFriisNF(controls.preFilterLoss, controls.lnaGain, controls.lnaNf, controls.postLnaNf);
+  const dev = DEVICE_CONFIGS[controls.deviceType];
+  const antLossDb = -10 * Math.log10(controls.antEffPercent / 100.0);
+  const totalLoss = antLossDb + dev.mismatch_loss + dev.body_loss;
+
+  const actualSatCount = renderSkyplot(controls);
+  const effectiveCn0Static = Math.max(10, controls.skyCn0 - totalLoss - nfVal);
+  renderWaveform(controls, effectiveCn0Static);
+
+  renderStaticResults(controls, effectiveCn0Static, nfVal, totalLoss, actualSatCount);
+
+  lastLinkBudget = {effectiveCn0Static, actualSatCount};
+  if(getActiveTab() === 2 && !window.__ppsRunning){
+    runPpsPreview();
+  }
+}
+
+// ---------- Dynamic kinematic engine ("else" branch / RUN DYNAMIC TEST) ----------
+function setSidebarDisabled(disabled){
+  document.getElementById('sidebar').classList.toggle('disabled', disabled);
+  document.getElementById('runSimBtn').disabled = disabled;
+}
+function showProgress(show){
+  document.getElementById('progressWrap').classList.toggle('show', show);
+}
+function updateProgress(frac){
+  document.getElementById('progressBar').style.width = `${Math.min(100, frac*100)}%`;
+}
+
+async function runDynamicTest(){
+  const controls = getControls();
+  setUiRunning(true);
+  regeneratePRNArrays();
+
+  const nfVal = computeFriisNF(controls.preFilterLoss, controls.lnaGain, controls.lnaNf, controls.postLnaNf);
+  const dev = DEVICE_CONFIGS[controls.deviceType];
+  const antLossDb = -10 * Math.log10(controls.antEffPercent / 100.0);
+  const totalLoss = antLossDb + dev.mismatch_loss + dev.body_loss;
+
+  const actualSatCount = renderSkyplot(controls);
+  const effectiveCn0Static = Math.max(10, controls.skyCn0 - totalLoss - nfVal);
+  renderWaveform(controls, effectiveCn0Static);
+
+  let mapCenterDyn, zoomLevelDyn, truePath;
+  if(controls.scenario.includes('101')){
+    const routeWaypoints = [
+      [25.0326+0.0002, 121.5616+0.0007],
+      [25.0358-0.0004, 121.5616+0.0007],
+      [25.0358-0.0004, 121.5646+0.0002],
+      [25.0326+0.0002, 121.5646+0.0002],
+      [25.0326+0.0002, 121.5616+0.0007]
+    ];
+    mapCenterDyn = [25.0342, 121.5638];
+    zoomLevelDyn = 16.5;
+    truePath = getInterpolatedPath(routeWaypoints, 15);
+  } else {
+    const parkLoopPoints = [
+      [22.731306, 120.307000],
+      [22.731778, 120.307301],
+      [22.732156, 120.307223],
+      [22.732252, 120.307010],
+      [22.731853, 120.306894],
+      [22.731306, 120.307000]
+    ];
+    mapCenterDyn = [22.7317, 120.3071];
+    zoomLevelDyn = 17.2;
+    truePath = getInterpolatedPath(parkLoopPoints, 13);
+  }
+
+  const trailLats=[], trailLons=[], trueTrailLats=[], trueTrailLons=[];
+  showProgress(true);
+  updateProgress(0);
+
+  for(let step=0; step<truePath.length; step++){
+    updateProgress((step+1)/truePath.length);
+
+    const [curLat, curLon] = truePath[step];
+    let dynCn0 = controls.skyCn0;
+    let currentEnvStatus = 'NORMAL LOS';
+    let statusColor = '#39ff14';
+
+    if(controls.scenario.includes('101')){
+      if(step >= 15 && step < 30){
+        dynCn0 -= 18; currentEnvStatus = 'SEVERE NLOS (Canyon)'; statusColor = '#ff003c';
+      } else if(step >= 30 && step < 45){
+        dynCn0 -= 8; currentEnvStatus = 'PARTIAL SHADOWING'; statusColor = '#eab308';
+      } else {
+        dynCn0 -= 2;
+      }
+    } else {
+      const scintillation = uniformRandom(-3.0, 1.0);
+      dynCn0 += (3.0 + scintillation);
+      currentEnvStatus = 'OPEN SKY w/ TREE FADING';
+      statusColor = '#00e5ff';
+    }
+
+    const effectiveCn0 = Math.max(10, dynCn0 - totalLoss - nfVal);
+    const completeLoss = effectiveCn0 < 22.0;
+
+    let baseError, noiseFactor;
+    if(controls.freqMode === 'L1+L5'){
+      if(effectiveCn0 >= 23.5){
+        baseError = 0.000015; noiseFactor = (50 - effectiveCn0 + 1) / 30;
+      } else {
+        if(completeLoss){ baseError = 0.0001; noiseFactor = 50; }
+        else { baseError = 0.00003; noiseFactor = (50 - effectiveCn0 + 1) / 5; }
+      }
+    } else {
+      if(completeLoss){ baseError = 0.0001; noiseFactor = 50; }
+      else { baseError = 0.00003; noiseFactor = (50 - effectiveCn0 + 1) / 10; }
+    }
+
+    // Turn detection: temporarily boosts mp_factor by *1.3 for this step only
+    // (mirrors the Python code's dev['mp_factor'] *= 1.3 ... /= 1.3 pattern).
+    let turnAngle = 0;
+    let effectiveMpFactor = dev.mp_factor;
+    if(step > 0 && step < truePath.length-1){
+      const [prevLat, prevLon] = truePath[step-1];
+      const [nextLat, nextLon] = truePath[step+1];
+      const bearing1 = Math.atan2(curLon-prevLon, curLat-prevLat);
+      const bearing2 = Math.atan2(nextLon-curLon, nextLat-curLat);
+      turnAngle = Math.abs(bearing2 - bearing1);
+      if(turnAngle > 0.5) effectiveMpFactor = dev.mp_factor * 1.3;
+    }
+
+    const dopMultiplier = actualSatCount < 4
+      ? 10.0
+      : Math.max(0.5, 1.0 + (12 - actualSatCount)*0.1) * effectiveMpFactor;
+    const stdDev = baseError * noiseFactor * dopMultiplier;
+
+    const simLat = gaussianRandom(curLat, stdDev);
+    const simLon = gaussianRandom(curLon, stdDev);
+    trailLats.push(simLat); trailLons.push(simLon);
+    trueTrailLats.push(curLat); trueTrailLons.push(curLon);
+
+    const avgErrorM = stdDev * 111320;
+    const errorPercent = (completeLoss || actualSatCount < 4) ? 999.9 : (avgErrorM / controls.toleranceM) * 100;
+
+    setCn0BoxLive(step+1, truePath.length, effectiveCn0, statusColor, nfVal);
+    setErrorBox('Live Avg. Error', avgErrorM);
+    setEvmBox('Live EVM', errorPercent, completeLoss ? 'Loss of Lock' : 'Tracking', !completeLoss);
+    setStatusBoxLive(currentEnvStatus, statusColor);
+
+    await sleep(50);
+  }
+
+  showProgress(false);
+  renderDynamicMap(controls, trueTrailLats, trueTrailLons, trailLats, trailLons, mapCenterDyn, zoomLevelDyn);
+  setUiRunning(false);
+}
+
+// =========================================================================
+// TAB 2 — GNSS-Disciplined 1PPS
+//
+// Models the classic GNSSDO servo: a local oscillator's 1PPS edge is
+// compared every second against the GNSS-derived reference edge, and a
+// PI (proportional-integral) loop steers the oscillator's frequency to
+// pull the phase error to zero. Reuses Tab 1's effective C/N0 and visible
+// satellite count (lastLinkBudget) as the source of GNSS timing noise, so
+// a worse link budget on Tab 1 visibly slows/roughens the lock on Tab 2.
+// =========================================================================
+
+function getPpsControls(){
+  const oscType = document.querySelector('input[name="oscType"]:checked').value;
+  const initPhaseNs = (parseFloat(document.getElementById('ppsInitPhase').value) || 0) * 1000.0; // µs -> ns
+  const initFreqPpb = parseFloat(document.getElementById('ppsInitFreq').value) || 0;
+  const tau = parseFloat(document.getElementById('ppsTauSlider').value);
+  const runSeconds = parseInt(document.getElementById('ppsDurationSlider').value, 10);
+  const outageEnabled = document.getElementById('ppsOutageEnable').checked;
+  const outageStart = outageEnabled ? (parseInt(document.getElementById('ppsOutageStart').value, 10) || 0) : -1;
+  const outageDur = outageEnabled ? (parseInt(document.getElementById('ppsOutageDuration').value, 10) || 0) : 0;
+  const outageEnd = outageEnabled ? outageStart + outageDur : -1;
+  return {oscType, initPhaseNs, initFreqPpb, tau, runSeconds, outageEnabled, outageStart, outageEnd};
+}
+
+// One discrete 1-second update of the discipline loop. Mutates and returns `state`.
+function stepDiscipline(state, ppsControls, linkBudget){
+  const osc = OSC_CONFIGS[ppsControls.oscType];
+  const t = state.t + 1;
+  const outageActive = ppsControls.outageEnabled && t >= ppsControls.outageStart && t <= ppsControls.outageEnd;
+
+  // 1 ppb of frequency offset accumulates as 1 ns of phase error per second.
+  const netOffsetPpb = state.trueFreeRunOffsetPpb - state.appliedCorrectionPpb;
+  state.phi += netOffsetPpb;
+
+  // Oscillator's own intrinsic wander (aging/temperature); worse while in
+  // holdover for a cheap TCXO, which is the whole point of the comparison.
+  const wanderSigma = osc.agingSigmaPpb + (outageActive ? osc.holdoverExtraSigmaPpb : 0);
+  state.trueFreeRunOffsetPpb += gaussianRandom(0, wanderSigma);
+
+  const gnssAvailable = !outageActive
+    && linkBudget.effectiveCn0Static >= PPS_LOSS_CN0_THRESHOLD
+    && linkBudget.actualSatCount >= PPS_MIN_SATS;
+
+  let measuredPhi = null, noiseNs = null;
+  if(gnssAvailable){
+    const dopFactor = linkBudget.actualSatCount < PPS_MIN_SATS
+      ? 8.0
+      : Math.max(0.5, 1.0 + (12 - linkBudget.actualSatCount) * 0.08);
+    noiseNs = (osc.phaseNoiseFloorNs + Math.max(0, 35 - linkBudget.effectiveCn0Static) * 2.2) * dopFactor;
+    measuredPhi = state.phi + gaussianRandom(0, noiseNs);
+
+    const Ki = 1.2 / (ppsControls.tau * ppsControls.tau);
+    const Kp = Math.min(0.9, 1.6 / ppsControls.tau);
+    state.appliedCorrectionPpb += Ki * measuredPhi;
+    state.phi -= Kp * measuredPhi;
+
+    if(Math.abs(measuredPhi) < PPS_LOCK_THRESHOLD_NS){ state.lockedStreak++; } else { state.lockedStreak = 0; }
+    if(state.lockedStreak >= PPS_LOCK_HOLD_SECONDS){ state.locked = true; state.everLocked = true; }
+  } else {
+    state.locked = false;
+    state.lockedStreak = 0;
+  }
+
+  state.t = t;
+  state.outageActive = outageActive;
+  state.gnssAvailable = gnssAvailable;
+  state.noiseNs = noiseNs;
+  state.status = gnssAvailable ? (state.locked ? 'TRACKING' : 'ACQUIRING') : (state.everLocked ? 'HOLDOVER' : 'NO FIX');
+  return state;
+}
+
+function newPpsState(ppsControls){
+  return {t:0, phi:ppsControls.initPhaseNs, trueFreeRunOffsetPpb:ppsControls.initFreqPpb,
+    appliedCorrectionPpb:0, lockedStreak:0, locked:false, everLocked:false,
+    status:'ACQUIRING', gnssAvailable:true, outageActive:false, noiseNs:null};
+}
+
+const PPS_STATUS_COLORS = {ACQUIRING:'#38bdf8', TRACKING:'#39ff14', HOLDOVER:'#eab308', 'NO FIX':'#ff003c'};
+
+function formatNs(ns){
+  return Math.abs(ns) >= 1000 ? `${(ns/1000).toFixed(2)} µs` : `${ns.toFixed(1)} ns`;
+}
+
+function setPpsLockBox(state, ppsControls){
+  const color = PPS_STATUS_COLORS[state.status];
+  document.getElementById('ppsLockBox').innerHTML =
+    `<div class="info-card" style="border:1px solid ${color};box-shadow:0 0 10px ${color};">`+
+    `<div style="color:#94a3b8;font-size:14px;">Lock State (Step ${state.t}/${ppsControls.runSeconds})</div>`+
+    `<div style="color:${color};font-weight:bold;font-size:1.5em;">${state.status}</div>`+
+    `<div class="nf-value">${OSC_CONFIGS[ppsControls.oscType].name}</div></div>`;
+}
+function setPpsMetricBoxes(state){
+  const inLock = Math.abs(state.phi) < PPS_LOCK_THRESHOLD_NS;
+  document.getElementById('ppsPhaseBox').innerHTML =
+    `<div class="metric-box"><div class="m-label">Phase Error (Local vs Ref)</div><div class="m-value">${formatNs(state.phi)}</div>`+
+    `<div class="m-delta ${inLock?'pass':'fail'}">${inLock?'Within ±100ns':'Out of Lock Window'}</div></div>`;
+  document.getElementById('ppsFreqBox').innerHTML =
+    `<div class="metric-box"><div class="m-label">Applied Frequency Correction</div><div class="m-value">${state.appliedCorrectionPpb.toFixed(1)} ppb</div>`+
+    `<div class="m-delta ${state.gnssAvailable?'pass':'fail'}">${state.gnssAvailable?'Steering Active':'Frozen (Holdover)'}</div></div>`;
+  document.getElementById('ppsRefBox').innerHTML =
+    `<div class="metric-box"><div class="m-label">GNSS Timing Reference</div><div class="m-value">${state.gnssAvailable?'AVAILABLE':'UNAVAILABLE'}</div>`+
+    `<div class="m-delta ${state.gnssAvailable?'pass':'fail'}">${state.gnssAvailable?('σ≈'+state.noiseNs.toFixed(0)+'ns'):(state.outageActive?'outage':'no fix')}</div></div>`;
+}
+
+// "Oscilloscope" view: two step edges (GNSS reference fixed at x=0, local
+// clock's edge offset by the current phase error) inside a fixed +/-5us window.
+function renderPpsScope(phi){
+  // Reference and local pulses are drawn on two separate vertical "lanes"
+  // (like a real 2-channel scope), each with its own 0/1 levels. Otherwise,
+  // once the loop is well locked the two edges sit on top of each other and
+  // whichever trace is drawn second visually erases the other.
+  const windowNs = 5000;
+  const xs = linspace(-windowNs, windowNs, 400, true);
+  const refY = xs.map(x => (x >= 0 ? 1 : 0) + 2.2);      // lane 2: reference, offset up
+  const localY = xs.map(x => (x >= phi ? 1 : 0));        // lane 0: local oscillator
+  const traces = [
+    {type:'scatter', x:xs, y:refY, mode:'lines', line:{color:'#c084fc', width:2, shape:'hv'}, name:'GNSS Reference PPS'},
+    {type:'scatter', x:xs, y:localY, mode:'lines', line:{color:DEVICE_CONFIGS['Navigator'].color, width:2, shape:'hv'}, name:'Local Disciplined PPS'}
+  ];
+  const layout = Object.assign(chartLayoutBase(), {
+    margin:{r:20,t:40,l:90,b:70},
+    title:{text:'1PPS Edge Alignment (Oscilloscope View)', font:{color:'#e2e8f0', size:16}},
+    xaxis:{title:'ns relative to reference edge', range:[-windowNs, windowNs], gridcolor:'#334155', zeroline:false},
+    yaxis:{range:[-0.4, 3.6], tickvals:[0.5, 2.7], ticktext:['Local PPS','Reference PPS'], gridcolor:'#334155'},
+    shapes:[
+      {type:'rect', x0:-PPS_LOCK_THRESHOLD_NS, x1:PPS_LOCK_THRESHOLD_NS, y0:-0.4, y1:3.6,
+        fillcolor:'rgba(57,255,20,0.08)', line:{width:0}},
+      {type:'line', x0:0, x1:0, y0:-0.4, y1:3.6, line:{color:'#475569', width:1, dash:'dot'}}
+    ],
+    legend:{orientation:'h', yanchor:'top', y:-0.32, xanchor:'center', x:0.5}
+  });
+  Plotly.react('ppsScopeDiv', traces, layout, {responsive:true, displayModeBar:false});
+}
+
+// Full-run phase-error-vs-time chart, with the lock band and (if enabled)
+// the outage window shaded for context.
+function renderPpsConvergence(trace, ppsControls){
+  const xs = trace.map(p => p.t);
+  const ys = trace.map(p => p.phi);
+  const traces = [{type:'scatter', x:xs, y:ys, mode:'lines', line:{color:OSC_CONFIGS[ppsControls.oscType].color, width:2}, name:'Phase Error'}];
+  const shapes = [{type:'rect', xref:'x', yref:'y', x0:0, x1:Math.max(1, ppsControls.runSeconds),
+    y0:-PPS_LOCK_THRESHOLD_NS, y1:PPS_LOCK_THRESHOLD_NS, fillcolor:'rgba(57,255,20,0.08)', line:{width:0}}];
+  if(ppsControls.outageEnabled){
+    shapes.push({type:'rect', xref:'x', yref:'paper', x0:ppsControls.outageStart, x1:ppsControls.outageEnd,
+      y0:0, y1:1, fillcolor:'rgba(255,0,60,0.10)', line:{width:0}});
+  }
+  const layout = Object.assign(chartLayoutBase(), {
+    margin:{r:20,t:40,l:60,b:40},
+    title:{text:'Phase Error Convergence', font:{color:'#e2e8f0', size:16}},
+    xaxis:{title:'elapsed seconds', range:[0, ppsControls.runSeconds], gridcolor:'#334155'},
+    yaxis:{title:'phase error (ns)', gridcolor:'#334155', zeroline:true, zerolinecolor:'#475569', automargin:true},
+    shapes, showlegend:false
+  });
+  Plotly.react('ppsConvergeDiv', traces, layout, {responsive:true, displayModeBar:false});
+}
+
+function showPpsProgress(show){ document.getElementById('ppsProgressWrap').classList.toggle('show', show); }
+function updatePpsProgress(frac){ document.getElementById('ppsProgressBar').style.width = `${Math.min(100, frac*100)}%`; }
+
+// Instant, non-animated preview: silently runs the full duration and renders
+// the end state + full trace. Mirrors Tab 1's "if not run_sim" static branch.
+function runPpsPreview(){
+  const ppsControls = getPpsControls();
+  const state = newPpsState(ppsControls);
+  const trace = [{t:0, phi:state.phi}];
+  for(let i=0;i<ppsControls.runSeconds;i++){
+    stepDiscipline(state, ppsControls, lastLinkBudget);
+    trace.push({t:state.t, phi:state.phi});
+  }
+  setPpsLockBox(state, ppsControls);
+  setPpsMetricBoxes(state);
+  renderPpsScope(state.phi);
+  renderPpsConvergence(trace, ppsControls);
+}
+
+// Animated run, triggered by the "RUN DISCIPLINE TEST" button: steps once per
+// (roughly) real second of simulated time, redrawing the scope live so the
+// two edges are visibly seen sliding together (or apart, during an outage).
+async function runPpsDisciplineTest(){
+  window.__ppsRunning = true;
+  setUiRunning(true);
+
+  const ppsControls = getPpsControls();
+  const state = newPpsState(ppsControls);
+  const trace = [{t:0, phi:state.phi}];
+  showPpsProgress(true);
+  updatePpsProgress(0);
+  renderPpsScope(state.phi);
+
+  for(let i=0;i<ppsControls.runSeconds;i++){
+    stepDiscipline(state, ppsControls, lastLinkBudget);
+    trace.push({t:state.t, phi:state.phi});
+    updatePpsProgress((i+1)/ppsControls.runSeconds);
+    setPpsLockBox(state, ppsControls);
+    setPpsMetricBoxes(state);
+    renderPpsScope(state.phi);
+    if(i % 2 === 0 || i === ppsControls.runSeconds-1){
+      renderPpsConvergence(trace, ppsControls);
+    }
+    await sleep(50);
+  }
+
+  showPpsProgress(false);
+  renderPpsConvergence(trace, ppsControls);
+  window.__ppsRunning = false;
+  setUiRunning(false);
+}
+
+// ---------- Tab switching ----------
+function getActiveTab(){
+  return document.getElementById('tab2Panel').classList.contains('active') ? 2 : 1;
+}
+function switchTab(tabNum){
+  document.getElementById('tab1Panel').classList.toggle('active', tabNum===1);
+  document.getElementById('tab2Panel').classList.toggle('active', tabNum===2);
+  document.getElementById('tabBtn1').classList.toggle('active', tabNum===1);
+  document.getElementById('tabBtn2').classList.toggle('active', tabNum===2);
+  document.getElementById('sidebarSection3').style.display = tabNum===1 ? 'block' : 'none';
+  document.getElementById('sidebarSection4').style.display = tabNum===2 ? 'block' : 'none';
+  if(tabNum===1){
+    Plotly.Plots.resize('skyplotDiv'); Plotly.Plots.resize('waveformDiv');
+    if(leafletMap) leafletMap.invalidateSize();
+  } else {
+    runPpsPreview();
+    Plotly.Plots.resize('ppsScopeDiv'); Plotly.Plots.resize('ppsConvergeDiv');
+  }
+}
+
+// Disables both the sidebar and tab switching while either simulation (Tab 1's
+// dynamic kinematic test or Tab 2's discipline test) is running.
+function setUiRunning(running){
+  setSidebarDisabled(running);
+  document.getElementById('tabBtn1').disabled = running;
+  document.getElementById('tabBtn2').disabled = running;
+}
+
+// ---------- Wiring ----------
+function attachControlListeners(){
+  document.getElementById('skyCn0Slider').addEventListener('input', e=>{
+    document.getElementById('skyCn0Val').textContent = e.target.value;
+    recomputeAndRenderStatic();
+  });
+  document.getElementById('maxSatsSlider').addEventListener('input', e=>{
+    document.getElementById('maxSatsVal').textContent = e.target.value;
+    recomputeAndRenderStatic();
+  });
+
+  const changeIds = ['antEffInput','preFilterLoss','lnaGain','lnaNf','postLnaNf','coordInput','toleranceInput','scenarioSelect'];
+  changeIds.forEach(id=>{
+    document.getElementById(id).addEventListener('change', recomputeAndRenderStatic);
+  });
+
+  document.querySelectorAll('input[name="deviceType"]').forEach(el=>el.addEventListener('change', recomputeAndRenderStatic));
+  document.querySelectorAll('input[name="mapStyle"]').forEach(el=>el.addEventListener('change', recomputeAndRenderStatic));
+  document.querySelectorAll('input[name="freqMode"]').forEach(el=>el.addEventListener('change', recomputeAndRenderStatic));
+  document.querySelectorAll('.constellation-check').forEach(el=>el.addEventListener('change', recomputeAndRenderStatic));
+
+  document.getElementById('runSimBtn').addEventListener('click', runDynamicTest);
+
+  // Tab 2 controls
+  document.getElementById('tabBtn1').addEventListener('click', ()=>switchTab(1));
+  document.getElementById('tabBtn2').addEventListener('click', ()=>switchTab(2));
+
+  document.getElementById('ppsTauSlider').addEventListener('input', e=>{
+    document.getElementById('ppsTauVal').textContent = e.target.value;
+    if(!window.__ppsRunning) runPpsPreview();
+  });
+  document.getElementById('ppsDurationSlider').addEventListener('input', e=>{
+    document.getElementById('ppsDurationVal').textContent = e.target.value;
+    if(!window.__ppsRunning) runPpsPreview();
+  });
+  const ppsChangeIds = ['ppsInitPhase','ppsInitFreq','ppsOutageStart','ppsOutageDuration'];
+  ppsChangeIds.forEach(id=>{
+    document.getElementById(id).addEventListener('change', ()=>{ if(!window.__ppsRunning) runPpsPreview(); });
+  });
+  document.querySelectorAll('input[name="oscType"]').forEach(el=>el.addEventListener('change', ()=>{ if(!window.__ppsRunning) runPpsPreview(); }));
+  document.getElementById('ppsOutageEnable').addEventListener('change', e=>{
+    document.getElementById('ppsOutageParams').style.opacity = e.target.checked ? '1' : '.4';
+    document.getElementById('ppsOutageStart').disabled = !e.target.checked;
+    document.getElementById('ppsOutageDuration').disabled = !e.target.checked;
+    if(!window.__ppsRunning) runPpsPreview();
+  });
+  document.getElementById('runPpsBtn').addEventListener('click', runPpsDisciplineTest);
+}
+
+// ---------- Init ----------
+window.addEventListener('DOMContentLoaded', ()=>{
+  initMap();
+  attachControlListeners();
+  recomputeAndRenderStatic();
+  window.addEventListener('resize', ()=>{
+    Plotly.Plots.resize('skyplotDiv');
+    Plotly.Plots.resize('waveformDiv');
+    if(leafletMap) leafletMap.invalidateSize();
+    if(getActiveTab()===2){
+      Plotly.Plots.resize('ppsScopeDiv');
+      Plotly.Plots.resize('ppsConvergeDiv');
+    }
+  });
+});
+</script>
+</body>
+</html>
